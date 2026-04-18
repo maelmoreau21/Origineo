@@ -1,7 +1,11 @@
 # Origineo — Project Memory (Mémoire IA)
 
 > Ce fichier sert de référence exhaustive pour l'IA lors de toute interaction future sur le projet Origineo.
-> Dernière mise à jour : 2026-04-19 (Phase 3 — Tests, Production, UI/UX)
+> Dernière mise à jour : 2026-04-19 (Phase 3 — Finition & Passage à instructions.md)
+
+## ⚠️ Règle Cruciale : Commits & Git
+**L'Agent ne doit JAMAIS effectuer de commit ou de push à moins que cela ne soit EXPLICITEMENT demandé par l'utilisateur.**
+Même si une modification est "finie", l'Agent doit attendre une instruction spécifique du type "fais un commit" ou "pousse sur github".
 
 ---
 
@@ -105,9 +109,13 @@ Origineo/
 ├── .env.example                         # Variables d'environnement (dev)
 ├── .env.prod.example                    # Variables d'environnement (prod)
 ├── README.md                            # Documentation complète + déploiement
+├── .claude/                            # Configuration et règles IA
+│   └── rules/
+│       └── instructions.md              # Ce fichier (Mémoire & Règles)
+├── .github/                             # CICD (GitHub Actions)
 ├── turbo.json                           # Pipeline Turborepo
 ├── pnpm-workspace.yaml                  # Workspaces
-└── project-memory.md                    # Ce fichier
+└── README.md                            # Documentation publique
 ```
 
 ---

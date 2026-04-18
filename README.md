@@ -35,9 +35,11 @@ Origineo/
 │   └── shared/         # Types & Enums partagés
 ├── nginx/              # Configuration Nginx prod
 ├── docker/             # Init SQL PostgreSQL
-├── docker-compose.yml          # Dev
-├── docker-compose.prod.yml     # Production
-└── project-memory.md           # Mémoire IA
+├── .github/             # CI/CD (GitHub Actions)
+├── .claude/             # Règles et Mémoire IA
+├── docker-compose.yml   # Dev
+├── docker-compose.prod.yml # Production
+└── README.md            # Documentation
 ```
 
 ---
