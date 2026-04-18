@@ -353,9 +353,10 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 - **41 tests unitaires** (Vitest) : merge scoring (18), tree logic (12), route security (11)
 - **Arbre React Flow optimisé** : ReactFlowProvider, fitView animé, transitions entre profondeurs, double-click recentrage, hints clavier
 - **PersonNode enrichi** : indicateur de génération, profession, hover avec glow coloré
-- **docker-compose.prod.yml** : Nginx reverse proxy, health checks, resource limits, variables obligatoires
-- **Nginx** : gzip, rate limiting (login 5/min, API 30/s), security headers, cache assets, HTTPS ready
-- **README.md** : Guide complet (quick start, déploiement, API reference, sécurité)
+- **CI/CD GitHub Actions** : Build & Push automatique vers GHCR (`origineo-api`, `origineo-web`)
+- **docker-compose.prod.yml** : Images distantes GHCR, health checks, resource limits
+- **Nginx** : gzip, rate limiting (login/api), security headers, cache assets, HTTPS ready
+- **README.md** : Guide complet (quick start, déploiement CI/CD, API reference)
 - **.env.prod.example** : Template avec instructions de sécurité
 
 ### Phase 4 (Prochaine)
