@@ -73,8 +73,8 @@ const nodeTypes = {
 
 // ─── Inner Flow (needs ReactFlowProvider) ───
 function TreeFlow() {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [rootPersonId, setRootPersonId] = useState<string | null>(null);
   const [ancestorGens, setAncestorGens] = useState(4);
   const [descendantGens, setDescendantGens] = useState(2);
@@ -372,7 +372,7 @@ function TreeFlow() {
             <MiniMap
               position="bottom-right"
               nodeColor={(node) => {
-                const gender = node.data?.person?.gender;
+                const gender = (node.data as any)?.person?.gender;
                 if (gender === 'MALE') return 'hsl(210, 70%, 55%)';
                 if (gender === 'FEMALE') return 'hsl(330, 65%, 55%)';
                 return 'hsl(220, 12%, 50%)';

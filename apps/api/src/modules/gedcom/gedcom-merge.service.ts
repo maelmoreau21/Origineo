@@ -132,7 +132,7 @@ export class GedcomMergeService {
     this.logger.log(`Analyzing GEDCOM file for merge: ${filename}`);
 
     const { readGedcom } = await import('read-gedcom');
-    const gedcom = readGedcom(fileBuffer);
+    const gedcom = readGedcom(fileBuffer as any);
 
     const individuals = gedcom.getIndividualRecord();
     const families = gedcom.getFamilyRecord();
@@ -141,7 +141,7 @@ export class GedcomMergeService {
     const stagedPersons: StagedPerson[] = [];
     for (const indi of individuals.arraySelect()) {
       const pointer = indi.pointer().toString();
-      const name = indi.getName().valueAsExact()?.[0] || '';
+      const name = indi.getName().value()?.[0] || '';
       const nameParts = this.parseGedcomName(name);
 
       const sex = indi.getSex().value()?.[0];

@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Reflector } from '@nestjs/core';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, ExecutionContext } from '@nestjs/common';
 
 // ─── Helper: Fake ExecutionContext ───────────
 function createMockContext(user: any | null, metadata: any = {}): ExecutionContext {

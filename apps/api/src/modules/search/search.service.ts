@@ -5,7 +5,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
-interface SearchResult {
+export interface SearchResult {
   id: string;
   usage_surname: string | null;
   birth_surname: string | null;
