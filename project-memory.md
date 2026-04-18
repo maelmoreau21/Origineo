@@ -1,7 +1,7 @@
 # Origineo — Project Memory (Mémoire IA)
 
 > Ce fichier sert de référence exhaustive pour l'IA lors de toute interaction future sur le projet Origineo.
-> Dernière mise à jour : 2026-04-19 (Phase 2 — Stockage fichiers + Fusion GEDCOM)
+> Dernière mise à jour : 2026-04-19 (Phase 3 — Tests, Production, UI/UX)
 
 ---
 
@@ -96,8 +96,15 @@ Origineo/
 │   ├── persons/{UUID}/                  # Dossiers individuels
 │   └── unions/{UUID1}_{UUID2}/          # Dossiers de couples
 │
+├── nginx/                               # Reverse proxy production
+│   ├── nginx.conf                       # Config Nginx (gzip, rate limit, headers)
+│   └── ssl/                             # Certificats SSL (Let's Encrypt)
+│
 ├── docker-compose.yml                   # Dev: PostgreSQL + API + Web + volumes
-├── .env.example                         # Variables d'environnement
+├── docker-compose.prod.yml              # Prod: + Nginx + resource limits + health checks
+├── .env.example                         # Variables d'environnement (dev)
+├── .env.prod.example                    # Variables d'environnement (prod)
+├── README.md                            # Documentation complète + déploiement
 ├── turbo.json                           # Pipeline Turborepo
 ├── pnpm-workspace.yaml                  # Workspaces
 └── project-memory.md                    # Ce fichier
@@ -292,6 +299,14 @@ pnpm --filter @origineo/api prisma generate
 
 # Build production
 pnpm run build
+
+# Tests
+pnpm --filter @origineo/api test        # Lancer les 41 tests
+pnpm --filter @origineo/api test:watch  # Mode watch
+pnpm --filter @origineo/api test:cov    # Avec couverture
+
+# Production
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
 
 ---
@@ -334,12 +349,16 @@ pnpm run build
 - **Fiche personne enrichie** : Section Documents avec upload, preview images, téléchargement, suppression
 - **Types partagés** : MergeAnalysisDto, DuplicateCandidateDto, MergeDecisionDto, MergeResultDto
 
-### Phase 3 (Prochaine)
-- Thème clair / sombre
-- Tests automatisés (Vitest)
-- Export PDF de l'arbre
+### Phase 3 ✅ (Tests, Production & UI)
+- **41 tests unitaires** (Vitest) : merge scoring (18), tree logic (12), route security (11)
+- **Arbre React Flow optimisé** : ReactFlowProvider, fitView animé, transitions entre profondeurs, double-click recentrage, hints clavier
+- **PersonNode enrichi** : indicateur de génération, profession, hover avec glow coloré
+- **docker-compose.prod.yml** : Nginx reverse proxy, health checks, resource limits, variables obligatoires
+- **Nginx** : gzip, rate limiting (login 5/min, API 30/s), security headers, cache assets, HTTPS ready
+- **README.md** : Guide complet (quick start, déploiement, API reference, sécurité)
+- **.env.prod.example** : Template avec instructions de sécurité
 
-### Phase 4 (Future)
+### Phase 4 (Prochaine)
 - Notifications et historique des modifications
 - Mode collaboratif temps réel
 - Support multi-langues (i18n)

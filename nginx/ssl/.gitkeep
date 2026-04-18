@@ -1,0 +1,7 @@
+# Placeholder for SSL certificates
+# Place your cert.pem and key.pem files here for HTTPS support.
+#
+# For Let's Encrypt, use:
+#   certbot certonly --standalone -d yourdomain.com
+#
+# Then copy fullchain.pem → cert.pem and privkey.pem → key.pem

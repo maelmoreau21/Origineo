@@ -1,94 +1,238 @@
 # 🌳 Origineo
 
-**Application web d'arbre généalogique** — Conçue pour la stabilité, la performance et la scalabilité.
-
-![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue)
-![NestJS](https://img.shields.io/badge/NestJS-11-red)
-![Next.js](https://img.shields.io/badge/Next.js-15-black)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-blue)
-![Docker](https://img.shields.io/badge/Docker-Compose-blue)
-
----
+**Application web d'arbre généalogique** conçue pour gérer des millions de profils avec stabilité et performance.
 
 ## ✨ Fonctionnalités
 
-- 🌳 **Visualisation d'arbre interactif** — React Flow avec layout Dagre automatique
-- 🔍 **Recherche fuzzy** — PostgreSQL pg_trgm pour la recherche approximative
-- 📊 **Chargement dynamique** — CTE récursives, ne charge jamais toute la BDD
-- 🔗 **Calcul de parenté** — Chemin le plus court entre deux personnes
-- 📄 **GEDCOM** — Import/Export au format .ged (5.5.1)
-- 🔐 **Rôles** — Visiteur (lecture seule) et Administrateur (modification)
-- 🐳 **100% Docker** — Un seul `docker compose up` pour tout lancer
+- **Arbre interactif** — Visualisation React Flow avec disposition automatique Dagre
+- **Chargement dynamique** — CTE récursives pour charger X générations ascendantes/descendantes
+- **Import/Export GEDCOM** — Compatibilité GEDCOM 5.5.1 avec fusion avancée et détection de doublons
+- **Stockage de documents** — Upload de photos et actes (dossiers UUID par personne/couple)
+- **Recherche fuzzy** — Recherche par trigrammes (pg_trgm) sur les noms
+- **Calcul de parenté** — BFS bidirectionnel pour trouver le chemin entre deux personnes
+- **Auth JWT** — Rôles ADMIN / VISITOR avec guards NestJS
+- **Dark theme premium** — Design système glassmorphism avec des micro-animations
 
----
+## 🏗️ Stack Technique
 
-## 🚀 Démarrage Rapide
-
-### Prérequis
-
-- [Docker](https://docs.docker.com/get-docker/) et Docker Compose
-- [Node.js 22+](https://nodejs.org/) et [pnpm 9+](https://pnpm.io/)
-
-### Installation
-
-```bash
-# 1. Cloner le projet
-git clone https://github.com/votre-username/Origineo.git
-cd Origineo
-
-# 2. Copier les variables d'environnement
-cp .env.example .env
-
-# 3. Installer les dépendances
-pnpm install
-
-# 4. Lancer via Docker (recommandé)
-docker compose up --build
-
-# Ou lancer manuellement :
-docker compose up -d db          # PostgreSQL
-pnpm --filter @origineo/api prisma migrate dev  # Migrations
-pnpm run dev                     # API + Web
-```
-
-### Accès
-
-| Service | URL |
+| Couche | Technologie |
 |---|---|
-| Frontend | http://localhost:3000 |
-| API | http://localhost:3001 |
-| Swagger Docs | http://localhost:3001/api/docs |
-| Prisma Studio | `pnpm --filter @origineo/api prisma studio` |
-
----
+| Backend | NestJS 11 · TypeScript · Prisma 7 |
+| Frontend | Next.js 15 · React 19 · React Flow 12 |
+| Base de données | PostgreSQL 17 |
+| Conteneurisation | Docker + Docker Compose |
+| Reverse Proxy | Nginx 1.27 |
+| Tests | Vitest |
 
 ## 📁 Structure du Projet
 
 ```
 Origineo/
-├── apps/api/          # Backend NestJS 11
-├── apps/web/          # Frontend Next.js 15
-├── packages/shared/   # Types & Enums partagés
-├── docker/            # Scripts d'initialisation PostgreSQL
-├── docker-compose.yml # Orchestration des services
-└── project-memory.md  # Mémoire IA exhaustive
+├── apps/
+│   ├── api/            # Backend NestJS
+│   └── web/            # Frontend Next.js
+├── packages/
+│   └── shared/         # Types & Enums partagés
+├── nginx/              # Configuration Nginx prod
+├── docker/             # Init SQL PostgreSQL
+├── docker-compose.yml          # Dev
+├── docker-compose.prod.yml     # Production
+└── project-memory.md           # Mémoire IA
 ```
-
-Consultez [project-memory.md](./project-memory.md) pour l'architecture détaillée.
 
 ---
 
-## 🔧 Commandes Utiles
+## 🚀 Démarrage Rapide (Développement)
+
+### Prérequis
+
+- **Node.js** 22+
+- **pnpm** 9.15+
+- **Docker** + **Docker Compose**
+
+### 1. Cloner et installer
 
 ```bash
-pnpm run dev                    # Lancer en développement
-pnpm run build                  # Build de production
-pnpm --filter @origineo/api prisma migrate dev   # Migrations BDD
-pnpm --filter @origineo/api prisma studio        # IDE visuel BDD
+git clone https://github.com/votre-user/Origineo.git
+cd Origineo
+pnpm install
+```
+
+### 2. Lancer PostgreSQL
+
+```bash
+docker compose up -d db
+```
+
+### 3. Configurer l'environnement
+
+```bash
+cp .env.example .env
+# Modifier les variables si nécessaire
+```
+
+### 4. Initialiser la base de données
+
+```bash
+pnpm --filter @origineo/api prisma migrate dev
+pnpm --filter @origineo/api prisma generate
+```
+
+### 5. Lancer l'application
+
+```bash
+pnpm run dev
+```
+
+- **API** : http://localhost:3001
+- **Swagger** : http://localhost:3001/api
+- **Frontend** : http://localhost:3000
+
+### 6. Premier utilisateur
+
+Le premier utilisateur enregistré via `/admin` obtient automatiquement le rôle **ADMIN**.
+
+---
+
+## 🐳 Tout via Docker (Développement)
+
+```bash
+cp .env.example .env
+docker compose up --build
 ```
 
 ---
 
-## 📄 Licence
+## 🏭 Déploiement en Production
 
-Ce projet est privé. Tous droits réservés.
+### 1. Préparer l'environnement
+
+```bash
+cp .env.prod.example .env.prod
+```
+
+Éditez `.env.prod` avec des valeurs sécurisées :
+
+```env
+DB_PASSWORD=un_mot_de_passe_tres_fort_ici
+JWT_SECRET=votre_secret_jwt_64_caracteres_aleatoires
+NEXT_PUBLIC_API_URL=https://votre-domaine.com
+```
+
+> **⚠️ Important** : Utilisez `openssl rand -base64 64 | tr -d '\n'` pour générer le JWT_SECRET.
+
+### 2. SSL (optionnel mais recommandé)
+
+```bash
+# Avec Let's Encrypt
+certbot certonly --standalone -d votre-domaine.com
+
+# Copier les certificats
+cp /etc/letsencrypt/live/votre-domaine.com/fullchain.pem nginx/ssl/cert.pem
+cp /etc/letsencrypt/live/votre-domaine.com/privkey.pem nginx/ssl/key.pem
+```
+
+Puis décommentez la section HTTPS dans `nginx/nginx.conf`.
+
+### 3. Lancer en production
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+```
+
+### 4. Vérifier
+
+```bash
+# Santé de l'API
+curl http://localhost/api
+
+# Santé Nginx
+curl http://localhost/health
+
+# Logs
+docker compose -f docker-compose.prod.yml logs -f
+```
+
+### Architecture de production
+
+```
+Internet → Nginx (:80/:443)
+                ├── /api/*  → API NestJS (:3001)
+                └── /*      → Next.js (:3000)
+
+                      API → PostgreSQL (:5432)
+                       │
+                       └── Volume: filedata (stockage documents)
+```
+
+### Sécurité Production
+
+| Mesure | Détail |
+|---|---|
+| Rate limiting login | 5 req/min max par IP |
+| Rate limiting API | 30 req/s max par IP |
+| Security headers | X-Frame-Options, X-XSS-Protection, CSP |
+| Upload limit | 25 MB (Nginx) + 20 MB (API) |
+| Non-root containers | Utilisateurs `nodejs` / `nextjs` |
+| Health checks | Toutes les 10s avec retry |
+
+---
+
+## 🧪 Tests
+
+```bash
+# Lancer tous les tests
+pnpm --filter @origineo/api test
+
+# Mode watch
+pnpm --filter @origineo/api test:watch
+
+# Avec couverture
+pnpm --filter @origineo/api test:cov
+```
+
+### Tests disponibles
+
+| Suite | Tests | Couverture |
+|---|---|---|
+| GEDCOM Merge Algorithm | 18 tests | Bigram similarity, scoring, normalization |
+| Tree Service | 12 tests | Generation mapping, node building, edge cases |
+| Route Security | 11 tests | RolesGuard, RBAC matrix visitor/admin |
+| **Total** | **41 tests** | |
+
+---
+
+## 📄 API Endpoints
+
+### Routes Publiques (sans auth)
+
+| Méthode | Route | Description |
+|---|---|---|
+| GET | `/api/persons` | Liste paginée |
+| GET | `/api/persons/root` | Personne racine |
+| GET | `/api/persons/:id` | Détail + relations |
+| GET | `/api/tree/:id` | Arbre dynamique |
+| GET | `/api/tree/relationship/:a/:b` | Chemin de parenté |
+| GET | `/api/search?q=...` | Recherche fuzzy |
+| GET | `/api/gedcom/export` | Export GEDCOM |
+| GET | `/api/documents/person/:id` | Documents d'une personne |
+| GET | `/api/documents/:id/download` | Télécharger un document |
+
+### Routes Admin (JWT + rôle ADMIN)
+
+| Méthode | Route | Description |
+|---|---|---|
+| POST | `/api/persons` | Créer une personne |
+| PATCH | `/api/persons/:id` | Modifier |
+| DELETE | `/api/persons/:id` | Supprimer |
+| POST | `/api/gedcom/import` | Import GEDCOM simple |
+| POST | `/api/gedcom/merge/analyze` | Analyse pour fusion |
+| POST | `/api/gedcom/merge/apply` | Appliquer fusion |
+| POST | `/api/documents/upload` | Upload fichier |
+| DELETE | `/api/documents/:id` | Supprimer fichier |
+
+---
+
+## 📝 Licence
+
+MIT © Origineo

@@ -1,0 +1,112 @@
+# ══════════════════════════════════════════════════════
+# Origineo — Production Docker Compose
+# ══════════════════════════════════════════════════════
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Prerequisites:
+#   - Copy .env.example to .env.prod and set secure values
+#   - Set JWT_SECRET to a strong 64-char random string
+#   - Set DB_PASSWORD to a strong random password
+#   - Ensure ports 80/443 are available for Nginx
+#
+# ══════════════════════════════════════════════════════
+
+services:
+  # ─── PostgreSQL ──────────────────────────
+  db:
+    image: postgres:17-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-origineo}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      POSTGRES_DB: ${DB_NAME:-origineo}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-origineo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ─── Backend API ─────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: production
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-origineo}:${DB_PASSWORD}@db:5432/${DB_NAME:-origineo}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-7d}
+      API_PORT: 3001
+      STORAGE_PATH: /app/storage
+      NODE_ENV: production
+    volumes:
+      - filedata:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3001/api || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─── Frontend ────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: production
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3001}
+    restart: always
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: 1
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ─── Nginx Reverse Proxy ─────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    restart: always
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+      - web
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+volumes:
+  pgdata:
+    driver: local
+  filedata:
+    driver: local
