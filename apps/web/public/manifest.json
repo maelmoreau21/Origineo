@@ -1,0 +1,9 @@
+{
+  "name": "Origineo",
+  "short_name": "Origineo",
+  "description": "Application web d'arbre généalogique",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111520",
+  "theme_color": "#3b9eff"
+}

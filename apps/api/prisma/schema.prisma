@@ -1,0 +1,161 @@
+// ══════════════════════════════════════
+// Origineo — Prisma Schema
+// ══════════════════════════════════════
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["typedSql"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNKNOWN
+}
+
+enum RelationshipType {
+  BIOLOGICAL
+  ADOPTIVE
+  FOSTER
+}
+
+enum UnionType {
+  MARRIAGE
+  PACS
+  PARTNERSHIP
+  OTHER
+}
+
+enum UnionEndReason {
+  DIVORCE
+  DEATH
+  ANNULMENT
+  OTHER
+}
+
+enum DocumentCategory {
+  BIRTH_CERTIFICATE
+  DEATH_CERTIFICATE
+  MARRIAGE_CERTIFICATE
+  PHOTO
+  OFFICIAL_DOCUMENT
+  OTHER
+}
+
+enum UserRole {
+  ADMIN
+  VISITOR
+}
+
+// ─── Models ─────────────────────────────────
+
+model Person {
+  id            String    @id @default(uuid()) @db.Uuid
+  usageSurname  String?   @map("usage_surname")
+  birthSurname  String?   @map("birth_surname")
+  givenNames    String    @map("given_names")
+  gender        Gender    @default(UNKNOWN)
+  birthDate     DateTime? @map("birth_date") @db.Date
+  birthPlace    String?   @map("birth_place")
+  deathDate     DateTime? @map("death_date") @db.Date
+  deathPlace    String?   @map("death_place")
+  professions   String[]  @default([])
+  notes         String?   @db.Text
+  isRootDefault Boolean   @default(false) @map("is_root_default")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  parentRelationships Relationship[] @relation("ParentRelation")
+  childRelationships  Relationship[] @relation("ChildRelation")
+  unionsAsPartner1    Union[]        @relation("Partner1")
+  unionsAsPartner2    Union[]        @relation("Partner2")
+  documents           Document[]
+
+  @@index([birthSurname])
+  @@index([usageSurname])
+  @@index([givenNames])
+  @@index([birthDate])
+  @@map("persons")
+}
+
+model Relationship {
+  id       String           @id @default(uuid()) @db.Uuid
+  parentId String           @map("parent_id") @db.Uuid
+  childId  String           @map("child_id") @db.Uuid
+  type     RelationshipType @default(BIOLOGICAL)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  parent Person @relation("ParentRelation", fields: [parentId], references: [id], onDelete: Cascade)
+  child  Person @relation("ChildRelation", fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([parentId, childId])
+  @@index([parentId])
+  @@index([childId])
+  @@map("relationships")
+}
+
+model Union {
+  id         String          @id @default(uuid()) @db.Uuid
+  partner1Id String          @map("partner1_id") @db.Uuid
+  partner2Id String          @map("partner2_id") @db.Uuid
+  type       UnionType       @default(MARRIAGE)
+  startDate  DateTime?       @map("start_date") @db.Date
+  startPlace String?         @map("start_place")
+  endDate    DateTime?       @map("end_date") @db.Date
+  endReason  UnionEndReason? @map("end_reason")
+  notes      String?         @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  partner1  Person     @relation("Partner1", fields: [partner1Id], references: [id], onDelete: Cascade)
+  partner2  Person     @relation("Partner2", fields: [partner2Id], references: [id], onDelete: Cascade)
+  documents Document[]
+
+  @@index([partner1Id])
+  @@index([partner2Id])
+  @@map("unions")
+}
+
+model Document {
+  id          String           @id @default(uuid()) @db.Uuid
+  personId    String?          @map("person_id") @db.Uuid
+  unionId     String?          @map("union_id") @db.Uuid
+  filename    String
+  mimeType    String           @map("mime_type")
+  storagePath String           @map("storage_path")
+  category    DocumentCategory @default(OTHER)
+  description String?          @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  person Person? @relation(fields: [personId], references: [id], onDelete: SetNull)
+  union  Union?  @relation(fields: [unionId], references: [id], onDelete: SetNull)
+
+  @@index([personId])
+  @@index([unionId])
+  @@map("documents")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  displayName  String?  @map("display_name")
+  role         UserRole @default(VISITOR)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}

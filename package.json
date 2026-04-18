@@ -1,0 +1,24 @@
+{
+  "name": "origineo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Origineo — Application web d'arbre généalogique",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "db:migrate": "pnpm --filter @origineo/api prisma migrate dev",
+    "db:push": "pnpm --filter @origineo/api prisma db push",
+    "db:studio": "pnpm --filter @origineo/api prisma studio",
+    "db:seed": "pnpm --filter @origineo/api prisma db seed"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "^5.8.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
