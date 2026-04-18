@@ -1,14 +1,15 @@
 // ══════════════════════════════════════
-// GEDCOM Module — Import/Export
+// GEDCOM Module — Import/Export/Merge
 // ══════════════════════════════════════
 
 import { Module } from '@nestjs/common';
 import { GedcomService } from './gedcom.service';
+import { GedcomMergeService } from './gedcom-merge.service';
 import { GedcomController } from './gedcom.controller';
 
 @Module({
   controllers: [GedcomController],
-  providers: [GedcomService],
-  exports: [GedcomService],
+  providers: [GedcomService, GedcomMergeService],
+  exports: [GedcomService, GedcomMergeService],
 })
 export class GedcomModule {}

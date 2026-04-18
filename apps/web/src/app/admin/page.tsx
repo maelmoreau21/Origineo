@@ -1,11 +1,11 @@
 'use client';
 
 // ══════════════════════════════════════
-// Origineo — Admin Panel
+// Origineo — Admin Panel (Phase 2)
 // ══════════════════════════════════════
 
 import { useState, useEffect, useCallback } from 'react';
-import { authApi, personApi, gedcomApi } from '@/lib/api';
+import { authApi, personApi, gedcomApi, documentApi } from '@/lib/api';
 
 type Tab = 'persons' | 'add' | 'gedcom' | 'login';
 
@@ -299,7 +299,7 @@ function AddPersonForm({ token }: { token: string }) {
   return (
     <div style={{ maxWidth: 700 }}>
       {success && (
-        <div className="toast-success" style={{
+        <div style={{
           padding: 'var(--space-3) var(--space-4)',
           borderRadius: 'var(--radius-lg)',
           marginBottom: 'var(--space-4)',
@@ -380,11 +380,18 @@ function AddPersonForm({ token }: { token: string }) {
   );
 }
 
-// ─── GEDCOM Panel ───────────────────────────
+// ─── GEDCOM Panel (Import / Export / Merge) ──
 function GedcomPanel({ token }: { token: string }) {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<any>(null);
 
+  // Merge state
+  const [mergeStep, setMergeStep] = useState<'idle' | 'analyzing' | 'review' | 'applying' | 'done'>('idle');
+  const [mergeAnalysis, setMergeAnalysis] = useState<any>(null);
+  const [mergeDecisions, setMergeDecisions] = useState<Record<string, { action: string; mergeIntoPersonId?: string }>>({});
+  const [mergeResult, setMergeResult] = useState<any>(null);
+
+  // ─── Basic Import ──────────────────────
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -401,75 +408,301 @@ function GedcomPanel({ token }: { token: string }) {
     }
   };
 
+  // ─── Merge Step 1: Analyze ─────────────
+  const handleMergeAnalyze = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setMergeStep('analyzing');
+    setMergeAnalysis(null);
+    setMergeResult(null);
+    try {
+      const result = await gedcomApi.mergeAnalyze(file, token);
+      setMergeAnalysis(result.data);
+      // Pre-fill default decisions
+      const defaults: Record<string, { action: string; mergeIntoPersonId?: string }> = {};
+      for (const dup of result.data.duplicates || []) {
+        defaults[dup.stagedPointer] = {
+          action: dup.confidence >= 70 ? 'merge' : 'create',
+          mergeIntoPersonId: dup.existingPersonId,
+        };
+      }
+      setMergeDecisions(defaults);
+      setMergeStep('review');
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de l\'analyse');
+      setMergeStep('idle');
+    }
+  };
+
+  // ─── Merge Step 2: Apply ───────────────
+  const handleMergeApply = async () => {
+    if (!mergeAnalysis) return;
+
+    setMergeStep('applying');
+    try {
+      const decisions = Object.entries(mergeDecisions).map(([pointer, dec]) => ({
+        stagedPointer: pointer,
+        action: dec.action,
+        mergeIntoPersonId: dec.mergeIntoPersonId,
+      }));
+
+      const result = await gedcomApi.mergeApply(
+        mergeAnalysis.sessionId,
+        decisions,
+        token,
+      );
+      setMergeResult(result.data);
+      setMergeStep('done');
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de la fusion');
+      setMergeStep('review');
+    }
+  };
+
+  const setDecision = (pointer: string, action: string, mergeIntoPersonId?: string) => {
+    setMergeDecisions((prev) => ({
+      ...prev,
+      [pointer]: { action, mergeIntoPersonId },
+    }));
+  };
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)' }}>
-      {/* Import */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+
+      {/* Row 1: Import + Export */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)' }}>
+        {/* Import */}
+        <div className="glass-card">
+          <h3 style={{ marginBottom: 'var(--space-4)' }}>📥 Import Simple</h3>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
+            Crée toutes les personnes du fichier sans vérifier les doublons.
+          </p>
+
+          <label htmlFor="gedcom-file-input" className="btn btn-secondary" style={{ cursor: 'pointer', display: 'flex', justifyContent: 'center', opacity: importing ? 0.5 : 1 }}>
+            {importing ? (
+              <><span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> Import en cours...</>
+            ) : (
+              '📄 Choisir un fichier .ged'
+            )}
+          </label>
+          <input id="gedcom-file-input" type="file" accept=".ged" onChange={handleImport} style={{ display: 'none' }} disabled={importing} />
+
+          {importResult && (
+            <div style={{ marginTop: 'var(--space-4)', padding: 'var(--space-4)', background: 'var(--color-emerald-subtle)', border: '1px solid var(--color-emerald)', borderRadius: 'var(--radius-lg)', fontSize: 'var(--text-sm)' }}>
+              <p style={{ fontWeight: 600, marginBottom: 'var(--space-2)' }}>✅ Import réussi</p>
+              <p>Personnes créées : {importResult.personsCreated}</p>
+              <p>Relations créées : {importResult.relationshipsCreated}</p>
+              <p>Unions créées : {importResult.unionsCreated}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Export */}
+        <div className="glass-card">
+          <h3 style={{ marginBottom: 'var(--space-4)' }}>📤 Exporter</h3>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
+            Téléchargez votre arbre au format GEDCOM 5.5.1.
+          </p>
+          <a href={gedcomApi.exportUrl()} className="btn btn-secondary" style={{ display: 'flex', justifyContent: 'center' }} id="export-gedcom-button">
+            📥 Télécharger l&apos;arbre complet (.ged)
+          </a>
+        </div>
+      </div>
+
+      {/* Row 2: Advanced Merge */}
       <div className="glass-card">
-        <h3 style={{ marginBottom: 'var(--space-4)' }}>📥 Importer un GEDCOM</h3>
-        <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
-          Importez un fichier .ged pour peupler votre arbre généalogique.
+        <h3 style={{ marginBottom: 'var(--space-2)' }}>🔀 Fusion Avancée</h3>
+        <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-6)' }}>
+          Importez un second fichier GEDCOM avec détection automatique des doublons et résolution manuelle des conflits.
         </p>
 
-        <label
-          htmlFor="gedcom-file-input"
-          className="btn btn-secondary"
-          style={{
-            cursor: 'pointer',
-            display: 'flex',
-            justifyContent: 'center',
-            opacity: importing ? 0.5 : 1,
-          }}
-        >
-          {importing ? (
-            <>
-              <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
-              Import en cours...
-            </>
-          ) : (
-            '📄 Choisir un fichier .ged'
-          )}
-        </label>
-        <input
-          id="gedcom-file-input"
-          type="file"
-          accept=".ged"
-          onChange={handleImport}
-          style={{ display: 'none' }}
-          disabled={importing}
-        />
+        {/* Step 1: Upload for analysis */}
+        {mergeStep === 'idle' && (
+          <>
+            <label htmlFor="gedcom-merge-input" className="btn btn-primary" style={{ cursor: 'pointer', display: 'inline-flex' }}>
+              🔍 Analyser un fichier .ged pour fusion
+            </label>
+            <input id="gedcom-merge-input" type="file" accept=".ged" onChange={handleMergeAnalyze} style={{ display: 'none' }} />
+          </>
+        )}
 
-        {importResult && (
-          <div style={{
-            marginTop: 'var(--space-4)',
-            padding: 'var(--space-4)',
-            background: 'var(--color-emerald-subtle)',
-            border: '1px solid var(--color-emerald)',
-            borderRadius: 'var(--radius-lg)',
-            fontSize: 'var(--text-sm)',
-          }}>
-            <p style={{ fontWeight: 600, marginBottom: 'var(--space-2)' }}>✅ Import réussi</p>
-            <p>Personnes créées : {importResult.personsCreated}</p>
-            <p>Relations créées : {importResult.relationshipsCreated}</p>
-            <p>Unions créées : {importResult.unionsCreated}</p>
+        {/* Analyzing spinner */}
+        {mergeStep === 'analyzing' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+            <span className="spinner" />
+            <span style={{ color: 'var(--color-text-secondary)' }}>Analyse et détection des doublons en cours...</span>
+          </div>
+        )}
+
+        {/* Step 2: Review duplicates */}
+        {mergeStep === 'review' && mergeAnalysis && (
+          <div className="animate-fade-in-up">
+            {/* Stats */}
+            <div style={{ display: 'flex', gap: 'var(--space-6)', marginBottom: 'var(--space-6)', flexWrap: 'wrap' }}>
+              <StatCard icon="👤" label="Personnes dans le fichier" value={mergeAnalysis.totalPersonsInFile} />
+              <StatCard icon="🔗" label="Familles" value={mergeAnalysis.totalFamiliesInFile} />
+              <StatCard icon="⚠️" label="Doublons potentiels" value={mergeAnalysis.duplicates?.length || 0} color="var(--color-amber)" />
+              <StatCard icon="✨" label="Nouvelles personnes" value={mergeAnalysis.newPersons?.length || 0} color="var(--color-emerald)" />
+            </div>
+
+            {/* Duplicate resolution table */}
+            {mergeAnalysis.duplicates?.length > 0 && (
+              <div style={{ marginBottom: 'var(--space-6)' }}>
+                <h4 style={{ marginBottom: 'var(--space-4)', color: 'var(--color-amber)' }}>
+                  ⚠️ Doublons détectés — Résolution requise
+                </h4>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                  {mergeAnalysis.duplicates.map((dup: any) => {
+                    const decision = mergeDecisions[dup.stagedPointer];
+
+                    return (
+                      <div key={dup.stagedPointer} style={{
+                        background: 'var(--color-bg-primary)',
+                        borderRadius: 'var(--radius-lg)',
+                        border: '1px solid var(--color-border)',
+                        padding: 'var(--space-4)',
+                      }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 'var(--space-4)', alignItems: 'center' }}>
+                          {/* Incoming person */}
+                          <div>
+                            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-1)', textTransform: 'uppercase' }}>
+                              📄 Fichier GEDCOM
+                            </div>
+                            <div style={{ fontWeight: 600 }}>
+                              {dup.staged.givenNames} {dup.staged.surname}
+                            </div>
+                            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+                              {dup.staged.gender} {dup.staged.birthDate && `· Né: ${dup.staged.birthDate}`}
+                              {dup.staged.birthPlace && ` · ${dup.staged.birthPlace}`}
+                            </div>
+                          </div>
+
+                          {/* Confidence badge */}
+                          <div style={{ textAlign: 'center' }}>
+                            <div className={`badge ${dup.confidence >= 70 ? 'badge-emerald' : dup.confidence >= 50 ? 'badge-amber' : 'badge-rose'}`} style={{ fontSize: 'var(--text-base)', padding: 'var(--space-2) var(--space-4)' }}>
+                              {dup.confidence}%
+                            </div>
+                            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: 'var(--space-1)' }}>
+                              confiance
+                            </div>
+                          </div>
+
+                          {/* Existing person */}
+                          <div>
+                            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-1)', textTransform: 'uppercase' }}>
+                              🗄️ Base existante
+                            </div>
+                            <div style={{ fontWeight: 600 }}>
+                              {dup.existingPerson.givenNames} {dup.existingPerson.usageSurname || dup.existingPerson.birthSurname || ''}
+                            </div>
+                            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+                              {dup.existingPerson.gender}
+                              {dup.existingPerson.birthDate && ` · Né: ${new Date(dup.existingPerson.birthDate).toLocaleDateString('fr-FR')}`}
+                              {dup.existingPerson.birthPlace && ` · ${dup.existingPerson.birthPlace}`}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Match reasons */}
+                        <div style={{ marginTop: 'var(--space-2)', display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                          {dup.matchReasons?.map((reason: string, i: number) => (
+                            <span key={i} style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', background: 'var(--color-bg-tertiary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)' }}>
+                              {reason}
+                            </span>
+                          ))}
+                        </div>
+
+                        {/* Decision buttons */}
+                        <div style={{ marginTop: 'var(--space-3)', display: 'flex', gap: 'var(--space-2)' }}>
+                          <button
+                            className={`btn ${decision?.action === 'merge' ? 'btn-primary' : 'btn-ghost'}`}
+                            style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-3)' }}
+                            onClick={() => setDecision(dup.stagedPointer, 'merge', dup.existingPersonId)}
+                          >
+                            🔗 Fusionner
+                          </button>
+                          <button
+                            className={`btn ${decision?.action === 'create' ? 'btn-primary' : 'btn-ghost'}`}
+                            style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-3)' }}
+                            onClick={() => setDecision(dup.stagedPointer, 'create')}
+                          >
+                            ➕ Créer nouveau
+                          </button>
+                          <button
+                            className={`btn ${decision?.action === 'skip' ? 'btn-primary' : 'btn-ghost'}`}
+                            style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-3)' }}
+                            onClick={() => setDecision(dup.stagedPointer, 'skip')}
+                          >
+                            ⏭ Ignorer
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Apply merge */}
+            <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={() => { setMergeStep('idle'); setMergeAnalysis(null); }}>
+                Annuler
+              </button>
+              <button className="btn btn-primary" onClick={handleMergeApply} id="apply-merge-button">
+                ✅ Appliquer la fusion
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Applying spinner */}
+        {mergeStep === 'applying' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+            <span className="spinner" />
+            <span style={{ color: 'var(--color-text-secondary)' }}>Application de la fusion en cours...</span>
+          </div>
+        )}
+
+        {/* Step 3: Done */}
+        {mergeStep === 'done' && mergeResult && (
+          <div className="animate-fade-in-up">
+            <div style={{ padding: 'var(--space-4)', background: 'var(--color-emerald-subtle)', border: '1px solid var(--color-emerald)', borderRadius: 'var(--radius-lg)', fontSize: 'var(--text-sm)' }}>
+              <p style={{ fontWeight: 600, marginBottom: 'var(--space-3)' }}>✅ Fusion terminée avec succès !</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-2)' }}>
+                <p>Personnes créées : <strong>{mergeResult.personsCreated}</strong></p>
+                <p>Personnes fusionnées : <strong>{mergeResult.personsMerged}</strong></p>
+                <p>Personnes ignorées : <strong>{mergeResult.personsSkipped}</strong></p>
+                <p>Relations créées : <strong>{mergeResult.relationshipsCreated}</strong></p>
+                <p>Unions créées : <strong>{mergeResult.unionsCreated}</strong></p>
+              </div>
+            </div>
+            <button className="btn btn-ghost" style={{ marginTop: 'var(--space-4)' }} onClick={() => { setMergeStep('idle'); setMergeAnalysis(null); setMergeResult(null); }}>
+              Effectuer une autre fusion
+            </button>
           </div>
         )}
       </div>
+    </div>
+  );
+}
 
-      {/* Export */}
-      <div className="glass-card">
-        <h3 style={{ marginBottom: 'var(--space-4)' }}>📤 Exporter en GEDCOM</h3>
-        <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
-          Téléchargez votre arbre au format GEDCOM 5.5.1 pour l&apos;utiliser dans d&apos;autres logiciels.
-        </p>
-
-        <a
-          href={gedcomApi.exportUrl()}
-          className="btn btn-secondary"
-          style={{ display: 'flex', justifyContent: 'center' }}
-          id="export-gedcom-button"
-        >
-          📥 Télécharger l&apos;arbre complet (.ged)
-        </a>
+// ─── Stat Card Component ────────────────────
+function StatCard({ icon, label, value, color }: { icon: string; label: string; value: number; color?: string }) {
+  return (
+    <div style={{
+      padding: 'var(--space-3) var(--space-4)',
+      background: 'var(--color-bg-primary)',
+      borderRadius: 'var(--radius-lg)',
+      border: '1px solid var(--color-border-subtle)',
+      minWidth: 140,
+    }}>
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-1)' }}>
+        {icon} {label}
+      </div>
+      <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, fontFamily: 'var(--font-display)', color: color || 'var(--color-text-primary)' }}>
+        {value}
       </div>
     </div>
   );

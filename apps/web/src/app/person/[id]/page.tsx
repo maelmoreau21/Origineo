@@ -4,15 +4,25 @@
 // Origineo — Person Detail Page
 // ══════════════════════════════════════
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
-import { personApi } from '@/lib/api';
+import { personApi, documentApi } from '@/lib/api';
+
+const CATEGORY_LABELS: Record<string, string> = {
+  BIRTH_CERTIFICATE: 'Acte de naissance',
+  DEATH_CERTIFICATE: 'Acte de décès',
+  MARRIAGE_CERTIFICATE: 'Acte de mariage',
+  PHOTO: 'Photo',
+  OFFICIAL_DOCUMENT: 'Document officiel',
+  OTHER: 'Autre',
+};
 
 export default function PersonPage() {
   const params = useParams();
   const personId = params?.id as string;
 
   const [person, setPerson] = useState<any>(null);
+  const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,8 +31,12 @@ export default function PersonPage() {
 
     async function load() {
       try {
-        const result = await personApi.getById(personId);
-        setPerson(result.data);
+        const [personResult, docsResult] = await Promise.all([
+          personApi.getById(personId),
+          documentApi.getByPerson(personId).catch(() => ({ data: [] })),
+        ]);
+        setPerson(personResult.data);
+        setDocuments(docsResult.data || []);
       } catch (err: any) {
         setError(err.message || 'Personne introuvable');
       } finally {
@@ -193,6 +207,11 @@ export default function PersonPage() {
           </div>
         </div>
 
+        {/* ─── Documents Section ──────────────── */}
+        <div style={{ marginTop: 'var(--space-8)' }}>
+          <DocumentsPanel personId={personId} documents={documents} onUpdate={setDocuments} />
+        </div>
+
         {/* UUID */}
         <div style={{ marginTop: 'var(--space-8)', textAlign: 'center' }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
@@ -200,6 +219,211 @@ export default function PersonPage() {
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Documents Panel ────────────────────────
+function DocumentsPanel({
+  personId,
+  documents,
+  onUpdate,
+}: {
+  personId: string;
+  documents: any[];
+  onUpdate: (docs: any[]) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [category, setCategory] = useState('OTHER');
+  const [description, setDescription] = useState('');
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const token = localStorage.getItem('origineo_token');
+    if (!token) {
+      alert('Veuillez vous connecter en tant qu\'administrateur pour envoyer des fichiers.');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      await documentApi.upload(
+        file,
+        { personId, category, description: description || undefined },
+        token,
+      );
+      // Refresh documents list
+      const result = await documentApi.getByPerson(personId);
+      onUpdate(result.data || []);
+      setDescription('');
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de l\'envoi');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDelete = async (docId: string) => {
+    const token = localStorage.getItem('origineo_token');
+    if (!token) return;
+    if (!confirm('Supprimer ce document ?')) return;
+
+    try {
+      await documentApi.delete(docId, token);
+      onUpdate(documents.filter((d) => d.id !== docId));
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de la suppression');
+    }
+  };
+
+  const isImage = (mimeType: string) =>
+    mimeType.startsWith('image/');
+
+  return (
+    <div className="glass-card" id="documents-panel">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+        <h3 style={{ fontSize: 'var(--text-lg)' }}>
+          📎 Documents ({documents.length})
+        </h3>
+      </div>
+
+      {/* Upload Form */}
+      <div style={{
+        padding: 'var(--space-4)',
+        background: 'var(--color-bg-primary)',
+        borderRadius: 'var(--radius-lg)',
+        border: '1px solid var(--color-border-subtle)',
+        marginBottom: 'var(--space-4)',
+      }}>
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div className="input-group" style={{ flex: '1 1 200px' }}>
+            <label className="input-label">Catégorie</label>
+            <select className="input" value={category} onChange={(e) => setCategory(e.target.value)} id="doc-category">
+              <option value="PHOTO">Photo</option>
+              <option value="BIRTH_CERTIFICATE">Acte de naissance</option>
+              <option value="DEATH_CERTIFICATE">Acte de décès</option>
+              <option value="MARRIAGE_CERTIFICATE">Acte de mariage</option>
+              <option value="OFFICIAL_DOCUMENT">Document officiel</option>
+              <option value="OTHER">Autre</option>
+            </select>
+          </div>
+          <div className="input-group" style={{ flex: '2 1 250px' }}>
+            <label className="input-label">Description (optionnelle)</label>
+            <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Photo de famille, 1965" id="doc-description" />
+          </div>
+          <div>
+            <label
+              htmlFor="doc-file-input"
+              className="btn btn-primary"
+              style={{ cursor: 'pointer', opacity: uploading ? 0.5 : 1 }}
+            >
+              {uploading ? (
+                <><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Envoi...</>
+              ) : (
+                '📤 Envoyer un fichier'
+              )}
+            </label>
+            <input
+              ref={fileInputRef}
+              id="doc-file-input"
+              type="file"
+              accept="image/*,.pdf,.doc,.docx"
+              onChange={handleUpload}
+              style={{ display: 'none' }}
+              disabled={uploading}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Documents List */}
+      {documents.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 'var(--space-6)', color: 'var(--color-text-muted)' }}>
+          <p style={{ fontSize: 'var(--text-xl)', marginBottom: 'var(--space-2)' }}>📂</p>
+          <p style={{ fontSize: 'var(--text-sm)' }}>Aucun document associé à cette personne.</p>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 'var(--space-3)' }}>
+          {documents.map((doc: any) => (
+            <div key={doc.id} style={{
+              background: 'var(--color-bg-primary)',
+              borderRadius: 'var(--radius-lg)',
+              border: '1px solid var(--color-border-subtle)',
+              overflow: 'hidden',
+              transition: 'all var(--transition-base)',
+            }}>
+              {/* Preview */}
+              {isImage(doc.mimeType) ? (
+                <div style={{
+                  width: '100%',
+                  height: 160,
+                  background: 'var(--color-bg-tertiary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden',
+                }}>
+                  <img
+                    src={documentApi.viewUrl(doc.id)}
+                    alt={doc.filename}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    loading="lazy"
+                  />
+                </div>
+              ) : (
+                <div style={{
+                  width: '100%',
+                  height: 80,
+                  background: 'var(--color-bg-tertiary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '2rem',
+                }}>
+                  📄
+                </div>
+              )}
+
+              {/* Info */}
+              <div style={{ padding: 'var(--space-3)' }}>
+                <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, marginBottom: 'var(--space-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {doc.filename}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+                  <span className="badge badge-accent" style={{ fontSize: '0.65rem' }}>
+                    {CATEGORY_LABELS[doc.category] || doc.category}
+                  </span>
+                </div>
+                {doc.description && (
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-2)' }}>
+                    {doc.description}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                  <a
+                    href={documentApi.downloadUrl(doc.id)}
+                    className="btn btn-ghost"
+                    style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}
+                  >
+                    ⬇ Télécharger
+                  </a>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)', color: 'var(--color-rose)' }}
+                    onClick={() => handleDelete(doc.id)}
+                  >
+                    🗑 Supprimer
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

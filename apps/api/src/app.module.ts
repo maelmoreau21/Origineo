@@ -11,6 +11,7 @@ import { UnionModule } from './modules/union/union.module';
 import { TreeModule } from './modules/tree/tree.module';
 import { SearchModule } from './modules/search/search.module';
 import { GedcomModule } from './modules/gedcom/gedcom.module';
+import { DocumentModule } from './modules/document/document.module';
 
 @Module({
   imports: [
@@ -22,6 +23,8 @@ import { GedcomModule } from './modules/gedcom/gedcom.module';
     TreeModule,
     SearchModule,
     GedcomModule,
+    DocumentModule,
   ],
 })
 export class AppModule {}
+

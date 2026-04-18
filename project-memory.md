@@ -1,7 +1,7 @@
 # Origineo — Project Memory (Mémoire IA)
 
 > Ce fichier sert de référence exhaustive pour l'IA lors de toute interaction future sur le projet Origineo.
-> Dernière mise à jour : 2026-04-19
+> Dernière mise à jour : 2026-04-19 (Phase 2 — Stockage fichiers + Fusion GEDCOM)
 
 ---
 
@@ -28,7 +28,7 @@
 | UI Framework | React | 19 |
 | Visualisation | React Flow (@xyflow/react) | 12 |
 | Layout Engine | Dagre | 0.8.5 |
-| GEDCOM Parser | read-gedcom | 2+ |
+| GEDCOM Parser | read-gedcom | 0.3.x |
 | Authentification | JWT (Passport) | — |
 | Package Manager | pnpm | 9.15+ |
 | Monorepo Tool | Turborepo | 2.5+ |
@@ -57,7 +57,12 @@ Origineo/
 │   │   │       ├── union/               # Couples (mariage, PACS)
 │   │   │       ├── tree/                # Navigation arbre (CTE récursives)
 │   │   │       ├── search/              # Recherche full-text (pg_trgm)
-│   │   │       └── gedcom/              # Import/Export GEDCOM
+│   │   │       ├── gedcom/              # Import/Export/Merge GEDCOM
+│   │   │       │   ├── gedcom.service.ts       # Import/Export basique
+│   │   │       │   └── gedcom-merge.service.ts # Fusion avancée avec doublons
+│   │   │       └── document/            # Upload/Download fichiers
+│   │   │           ├── document.service.ts     # Logique stockage UUID-folders
+│   │   │           └── document.controller.ts  # API Upload/Download/View
 │   │   ├── prisma/
 │   │   │   └── schema.prisma            # Schéma BDD complet
 │   │   ├── Dockerfile                   # Multi-stage (dev + prod)
@@ -87,7 +92,11 @@ Origineo/
 ├── docker/
 │   └── postgres/init.sql                # Extensions PG (uuid-ossp, pg_trgm)
 │
-├── docker-compose.yml                   # Dev: PostgreSQL + API + Web
+├── storage/                             # Stockage fichiers (créé runtime)
+│   ├── persons/{UUID}/                  # Dossiers individuels
+│   └── unions/{UUID1}_{UUID2}/          # Dossiers de couples
+│
+├── docker-compose.yml                   # Dev: PostgreSQL + API + Web + volumes
 ├── .env.example                         # Variables d'environnement
 ├── turbo.json                           # Pipeline Turborepo
 ├── pnpm-workspace.yaml                  # Workspaces
@@ -174,6 +183,12 @@ Origineo/
 - **Recherche** : Opérateur `%` (similarity) + `ILIKE` via pg_trgm
 - **Calcul de parenté** : BFS bidirectionnel avec limite de profondeur 20
 
+### 4.4 Système de Stockage Fichiers
+- **Structure** : `storage/persons/{UUID}/` pour les documents individuels, `storage/unions/{UUID1}_{UUID2}/` pour les documents de couple
+- **Nommage** : Les dossiers sont nommés par UUID de l'entité. Les fichiers sont renommés `{nom_original}_{8chars_uuid}.ext` pour éviter les collisions.
+- **Volume Docker** : Volume persistant `filedata` monté sur `/app/storage`
+- **Variable** : `STORAGE_PATH` (défaut: `../../storage` en dev, `/app/storage` en Docker)
+
 ---
 
 ## 5. API Endpoints
@@ -226,8 +241,21 @@ Origineo/
 ### GEDCOM
 | Méthode | Route | Auth | Description |
 |---|---|---|---|
-| POST | /api/gedcom/import | ADMIN | Upload .ged |
+| POST | /api/gedcom/import | ADMIN | Import simple (crée tout) |
+| POST | /api/gedcom/merge/analyze | ADMIN | Analyse un .ged pour fusion (détecte doublons) |
+| POST | /api/gedcom/merge/apply | ADMIN | Applique les décisions de fusion (merge/create/skip) |
 | GET | /api/gedcom/export | Public | Download .ged |
+
+### Documents
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| POST | /api/documents/upload | ADMIN | Upload fichier (multipart, ?personId=&category=) |
+| GET | /api/documents/person/:id | Public | Lister docs d'une personne |
+| GET | /api/documents/union/:id | Public | Lister docs d'un couple |
+| GET | /api/documents/:id | Public | Métadonnées d'un document |
+| GET | /api/documents/:id/download | Public | Télécharger un document |
+| GET | /api/documents/:id/view | Public | Afficher inline (images, PDF) |
+| DELETE | /api/documents/:id | ADMIN | Supprimer (fichier + BDD) |
 
 ---
 
@@ -238,7 +266,9 @@ Origineo/
 - **Validation** : class-validator + ValidationPipe global
 - **Erreurs** : HttpExceptionFilter global → réponses JSON uniformes
 - **Auth** : @Public() pour endpoints publics, @Roles('ADMIN') pour mutations
-- **Prisma** : PrismaService global (singleton), raw SQL pour CTE/pg_trgm
+- **Prisma** : PrismaService global (singleton + driver adapter pg), raw SQL pour CTE/pg_trgm
+- **Fichiers** : Stockage local dans dossiers UUID. Limite upload : 20 MB
+- **GEDCOM Merge** : Sessions en mémoire (TTL 30 min), algorithme bigram pour la similarité de noms
 
 ---
 
@@ -278,6 +308,7 @@ pnpm run build
 | JWT_SECRET | Clé secrète JWT | change_me |
 | JWT_EXPIRATION | Durée du token | 7d |
 | API_PORT | Port de l'API | 3001 |
+| STORAGE_PATH | Chemin racine du stockage fichiers | /app/storage (Docker) ou ../../storage (dev) |
 | NEXT_PUBLIC_API_URL | URL de l'API pour le frontend | http://localhost:3001 |
 
 ---
@@ -286,22 +317,60 @@ pnpm run build
 
 ### Phase 1 ✅ (Livrable Initial)
 - Infrastructure monorepo + Docker
-- Schéma BDD Prisma complet
-- Backend NestJS avec tous les modules
-- Frontend Next.js avec arbre interactif
-- Auth JWT + rôles
-- GEDCOM import/export
-- Recherche fuzzy
+- Schéma BDD Prisma complet (Prisma 7 + driver adapter)
+- Backend NestJS 11 avec modules : Auth, Person, Relationship, Union, Tree, Search, GEDCOM
+- Frontend Next.js 15 avec arbre interactif (React Flow + Dagre)
+- Auth JWT + rôles (ADMIN/VISITOR)
+- GEDCOM import/export basique
+- Recherche fuzzy pg_trgm
 
-### Phase 2 (Prochaine)
-- Upload de fichiers (photos, documents officiels)
-- Dossiers UUID par personne et par couple
-- Fusion GEDCOM avancée
+### Phase 2 ✅ (Stockage & Fusion)
+- **DocumentModule** : Upload, téléchargement, visualisation inline, suppression
+- **Dossiers UUID** : `storage/persons/{uuid}/` et `storage/unions/{uuid1}_{uuid2}/`
+- **Volume Docker persistant** `filedata` pour les fichiers uploadés
+- **Fusion GEDCOM avancée** : Analyse en 2 étapes (analyze → review → apply)
+- **Détection de doublons** : Algorithme bigram (prénoms 30pts, nom 30pts, genre 10pts, date 20pts, lieu 10pts)
+- **Interface de résolution** : Cartes comparatives GEDCOM vs BDD avec score de confiance et boutons merge/create/skip
+- **Fiche personne enrichie** : Section Documents avec upload, preview images, téléchargement, suppression
+- **Types partagés** : MergeAnalysisDto, DuplicateCandidateDto, MergeDecisionDto, MergeResultDto
+
+### Phase 3 (Prochaine)
 - Thème clair / sombre
 - Tests automatisés (Vitest)
-
-### Phase 3 (Future)
 - Export PDF de l'arbre
+
+### Phase 4 (Future)
 - Notifications et historique des modifications
 - Mode collaboratif temps réel
 - Support multi-langues (i18n)
+
+---
+
+## 10. Architecture de la Fusion GEDCOM
+
+### Workflow en 2 étapes
+
+1. **Analyse** (`POST /api/gedcom/merge/analyze`) :
+   - Parse le fichier GEDCOM → StagedPersons + StagedFamilies
+   - Compare chaque StagedPerson avec TOUTES les personnes existantes
+   - Calcule un score de confiance (0-100) basé sur : prénoms, nom, genre, date de naissance, lieu de naissance
+   - Retourne un `MergeAnalysis` avec un `sessionId` (TTL 30 min)
+
+2. **Application** (`POST /api/gedcom/merge/apply`) :
+   - L'utilisateur envoie ses décisions : `merge`, `create`, ou `skip` pour chaque doublon
+   - `merge` : fusionne les données GEDCOM dans la personne existante (ne surcharge jamais les champs non-null)
+   - `create` : crée une nouvelle personne indépendante
+   - `skip` : ignore la personne
+   - Crée ensuite unions et relations en vérifiant les doublons
+
+### Algorithme de Scoring
+
+| Critère | Points max | Détail |
+|---|---|---|
+| Prénoms identiques | 30 | Exact = 30, partiel = 20, bigram > 70% = proportionnel |
+| Nom identique | 30 | Exact = 30, bigram > 70% = proportionnel |
+| Genre identique | 10 | UNKNOWN ignoré |
+| Date naissance identique | 20 | Même jour = 20, même année (±365j) = 10 |
+| Lieu naissance identique | 10 | Exact = 10, partiel = 5 |
+| **Seuil minimum** | **40** | En dessous : pas de candidat affiché |
+| **Auto-merge** | **70** | Au-dessus : merge par défaut |

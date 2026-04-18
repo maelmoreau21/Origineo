@@ -183,3 +183,65 @@ export interface PaginatedResponse<T> {
   limit: number;
   totalPages: number;
 }
+
+// ─── Document Upload ────────────────────────
+export interface UploadDocumentParams {
+  personId?: string;
+  unionId?: string;
+  category?: DocumentCategory;
+  description?: string;
+}
+
+// ─── GEDCOM Merge ───────────────────────────
+export interface StagedPersonDto {
+  pointer: string;
+  givenNames: string;
+  surname: string;
+  gender: Gender;
+  birthDate: string | null;
+  birthPlace: string | null;
+  deathDate: string | null;
+  deathPlace: string | null;
+  notes: string | null;
+}
+
+export interface DuplicateCandidateDto {
+  stagedPointer: string;
+  staged: StagedPersonDto;
+  existingPersonId: string;
+  existingPerson: {
+    id: string;
+    givenNames: string;
+    usageSurname: string | null;
+    birthSurname: string | null;
+    gender: string;
+    birthDate: string | null;
+    birthPlace: string | null;
+    deathDate: string | null;
+    deathPlace: string | null;
+  };
+  confidence: number;
+  matchReasons: string[];
+}
+
+export interface MergeAnalysisDto {
+  sessionId: string;
+  totalPersonsInFile: number;
+  totalFamiliesInFile: number;
+  duplicates: DuplicateCandidateDto[];
+  newPersons: StagedPersonDto[];
+}
+
+export interface MergeDecisionDto {
+  stagedPointer: string;
+  action: 'merge' | 'create' | 'skip';
+  mergeIntoPersonId?: string;
+}
+
+export interface MergeResultDto {
+  personsCreated: number;
+  personsMerged: number;
+  personsSkipped: number;
+  relationshipsCreated: number;
+  unionsCreated: number;
+}

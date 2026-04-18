@@ -176,4 +176,85 @@ export const gedcomApi = {
     const qs = params.toString();
     return qs ? `${url}?${qs}` : url;
   },
+
+  mergeAnalyze: async (file: File, token: string) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE}/api/gedcom/merge/analyze`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Analysis failed' }));
+      throw new Error(error.message);
+    }
+
+    return response.json();
+  },
+
+  mergeApply: (sessionId: string, decisions: any[], token: string) =>
+    apiFetch<any>('/gedcom/merge/apply', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, decisions }),
+      token,
+    }),
 };
+
+// ─── Document API ────────────────────────────
+export const documentApi = {
+  upload: async (
+    file: File,
+    params: { personId?: string; unionId?: string; category?: string; description?: string },
+    token: string,
+  ) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const queryParams = new URLSearchParams();
+    if (params.personId) queryParams.set('personId', params.personId);
+    if (params.unionId) queryParams.set('unionId', params.unionId);
+    if (params.category) queryParams.set('category', params.category);
+    if (params.description) queryParams.set('description', params.description);
+
+    const response = await fetch(
+      `${API_BASE}/api/documents/upload?${queryParams.toString()}`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Upload failed' }));
+      throw new Error(error.message);
+    }
+
+    return response.json();
+  },
+
+  getByPerson: (personId: string) =>
+    apiFetch<any>(`/documents/person/${personId}`),
+
+  getByUnion: (unionId: string) =>
+    apiFetch<any>(`/documents/union/${unionId}`),
+
+  getOne: (id: string) =>
+    apiFetch<any>(`/documents/${id}`),
+
+  downloadUrl: (id: string) =>
+    `${API_BASE}/api/documents/${id}/download`,
+
+  viewUrl: (id: string) =>
+    `${API_BASE}/api/documents/${id}/view`,
+
+  delete: (id: string, token: string) =>
+    apiFetch<any>(`/documents/${id}`, {
+      method: 'DELETE',
+      token,
+    }),
+};
+
