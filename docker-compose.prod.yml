@@ -39,10 +39,7 @@ services:
 
   # ─── Backend API ─────────────────────────
   api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-      target: production
+    image: ghcr.io/maelmoreau21/origineo-api:latest
     restart: always
     environment:
       DATABASE_URL: postgresql://${DB_USER:-origineo}:${DB_PASSWORD}@db:5432/${DB_NAME:-origineo}
@@ -69,12 +66,7 @@ services:
 
   # ─── Frontend ────────────────────────────
   web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-      target: production
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3001}
+    image: ghcr.io/maelmoreau21/origineo-web:latest
     restart: always
     environment:
       NODE_ENV: production

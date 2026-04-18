@@ -134,11 +134,29 @@ cp /etc/letsencrypt/live/votre-domaine.com/privkey.pem nginx/ssl/key.pem
 
 Puis décommentez la section HTTPS dans `nginx/nginx.conf`.
 
-### 3. Lancer en production
+### 3. Lancer en production (CI/CD)
 
+Le projet utilise GitHub Actions pour le build automatique. Pour déployer :
+
+1. Se connecter au registry (une fois) :
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+echo $GITHUB_TOKEN | docker login ghcr.io -u maelmoreau21 --password-stdin
 ```
+2. Déployer les images distantes :
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod pull
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+```
+
+---
+
+## 🚀 CI/CD (GitHub Actions)
+
+L'application inclut un workflow complet :
+
+- **Automated Tests** : Exécution systématique des 41 tests à chaque push.
+- **Docker Registry** : Build et push automatique vers **GHCR**.
+- **Images** : `ghcr.io/maelmoreau21/origineo-api` & `origineo-web`.
 
 ### 4. Vérifier
 
