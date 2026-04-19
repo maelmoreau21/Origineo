@@ -88,6 +88,29 @@ export class TreeService {
       where: { id: { in: personIds } },
     });
 
+    const unionsByPerson = new Map<string, (typeof unions)[number][]>();
+    for (const union of unions) {
+      const p1Unions = unionsByPerson.get(union.partner1Id) || [];
+      p1Unions.push(union);
+      unionsByPerson.set(union.partner1Id, p1Unions);
+
+      const p2Unions = unionsByPerson.get(union.partner2Id) || [];
+      p2Unions.push(union);
+      unionsByPerson.set(union.partner2Id, p2Unions);
+    }
+
+    const parentsByChild = new Map<string, string[]>();
+    const childrenByParent = new Map<string, string[]>();
+    for (const relationship of relationships) {
+      const parentList = parentsByChild.get(relationship.childId) || [];
+      parentList.push(relationship.parentId);
+      parentsByChild.set(relationship.childId, parentList);
+
+      const childList = childrenByParent.get(relationship.parentId) || [];
+      childList.push(relationship.childId);
+      childrenByParent.set(relationship.parentId, childList);
+    }
+
     // Build generation map
     const generationMap = new Map<string, number>();
     generationMap.set(rootPersonId, 0);
@@ -96,24 +119,12 @@ export class TreeService {
 
     // Build nodes
     const nodes = persons.map((person) => {
-      const personUnions = unions.filter(
-        (u) => u.partner1Id === person.id || u.partner2Id === person.id,
-      );
-
-      const parents = relationships
-        .filter((r) => r.childId === person.id)
-        .map((r) => r.parentId);
-
-      const children = relationships
-        .filter((r) => r.parentId === person.id)
-        .map((r) => r.childId);
-
       return {
         person,
         generation: generationMap.get(person.id) || 0,
-        unions: personUnions,
-        parents,
-        children,
+        unions: unionsByPerson.get(person.id) || [],
+        parents: parentsByChild.get(person.id) || [],
+        children: childrenByParent.get(person.id) || [],
       };
     });
 

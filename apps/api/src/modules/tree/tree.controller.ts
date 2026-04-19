@@ -27,15 +27,18 @@ export class TreeController {
   @ApiQuery({ name: 'descendants', required: false, type: Number, description: 'Number of descendant generations (default: 2)' })
   async getTree(
     @Param('rootPersonId', ParseUUIDPipe) rootPersonId: string,
-    @Query('ancestors') ancestors?: number,
-    @Query('descendants') descendants?: number,
+    @Query('ancestors') ancestors?: string,
+    @Query('descendants') descendants?: string,
   ) {
+    const ancestorDepth = this.parseDepth(ancestors, 4, 12);
+    const descendantDepth = this.parseDepth(descendants, 2, 12);
+
     return {
       success: true,
       data: await this.treeService.getTree(
         rootPersonId,
-        ancestors || 4,
-        descendants || 2,
+        ancestorDepth,
+        descendantDepth,
       ),
     };
   }
@@ -51,5 +54,17 @@ export class TreeController {
       success: true,
       data: await this.treeService.getRelationshipPath(personAId, personBId),
     };
+  }
+
+  private parseDepth(value: string | undefined, fallback: number, max: number) {
+    if (value === undefined) return fallback;
+
+    const parsed = Number(value);
+    if (Number.isNaN(parsed)) return fallback;
+
+    const integer = Math.floor(parsed);
+    if (integer < 0) return 0;
+    if (integer > max) return max;
+    return integer;
   }
 }

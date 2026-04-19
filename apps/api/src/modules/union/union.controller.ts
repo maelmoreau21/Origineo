@@ -46,17 +46,17 @@ export class UnionController {
   }
 
   @Public()
-  @Get(':id')
-  @ApiOperation({ summary: 'Get a union by ID' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return { success: true, data: await this.unionService.findOne(id) };
-  }
-
-  @Public()
   @Get('person/:personId')
   @ApiOperation({ summary: 'Get all unions for a person' })
   async findByPerson(@Param('personId', ParseUUIDPipe) personId: string) {
     return { success: true, data: await this.unionService.findByPerson(personId) };
+  }
+
+  @Public()
+  @Get(':id')
+  @ApiOperation({ summary: 'Get a union by ID' })
+  async findOne(@Param('id', ParseUUIDPipe) id: string) {
+    return { success: true, data: await this.unionService.findOne(id) };
   }
 
   @Patch(':id')
