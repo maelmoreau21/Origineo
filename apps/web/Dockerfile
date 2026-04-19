@@ -21,8 +21,10 @@ FROM deps AS development
 COPY apps/web/ ./apps/web/
 COPY packages/shared/ ./packages/shared/
 WORKDIR /app/apps/web
+# Install package-local dependencies so `next` binary is available in the app
+RUN pnpm --dir /app/apps/web install --frozen-lockfile || pnpm --dir /app/apps/web install
 EXPOSE 3000
-CMD ["pnpm", "run", "dev"]
+CMD ["pnpm","--dir","/app/apps/web","exec","--","next","dev","-H","0.0.0.0","-p","3000"]
 
 # ─── Builder ─────────────────────────
 FROM deps AS builder

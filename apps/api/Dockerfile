@@ -21,7 +21,10 @@ FROM deps AS development
 COPY apps/api/ ./apps/api/
 COPY packages/shared/ ./packages/shared/
 WORKDIR /app/apps/api
-RUN npx prisma generate
+# Use pnpm workspace exec to run prisma generate from the workspace root
+RUN pnpm --dir /app/apps/api install --frozen-lockfile || pnpm --dir /app/apps/api install
+# Ensure prisma is available in the package node_modules, then generate client
+RUN pnpm --dir /app/apps/api exec prisma generate --schema=/app/apps/api/prisma/schema.prisma
 EXPOSE 3001
 CMD ["pnpm", "run", "start:dev"]
 
@@ -30,7 +33,10 @@ FROM deps AS builder
 COPY apps/api/ ./apps/api/
 COPY packages/shared/ ./packages/shared/
 WORKDIR /app/apps/api
-RUN npx prisma generate
+# Generate Prisma client using workspace exec and explicit schema path
+RUN pnpm --dir /app/apps/api install --frozen-lockfile || pnpm --dir /app/apps/api install
+# Ensure prisma is available in the package node_modules, then generate client
+RUN pnpm --dir /app/apps/api exec prisma generate --schema=/app/apps/api/prisma/schema.prisma
 RUN pnpm run build
 
 # ─── Production ──────────────────────

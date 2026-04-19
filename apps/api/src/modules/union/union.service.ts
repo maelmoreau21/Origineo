@@ -28,14 +28,20 @@ export class UnionService {
     if (!p1) throw new NotFoundException(`Partner 1 with ID "${dto.partner1Id}" not found`);
     if (!p2) throw new NotFoundException(`Partner 2 with ID "${dto.partner2Id}" not found`);
 
+    const startDate = dto.startDate ? new Date(dto.startDate) : null;
+    const endDate = dto.endDate ? new Date(dto.endDate) : null;
+
+    this.validateUnionChronology(startDate, endDate);
+    this.validateUnionPartnerChronology(startDate, endDate, p1, p2);
+
     return this.prisma.union.create({
       data: {
         partner1Id: dto.partner1Id,
         partner2Id: dto.partner2Id,
         type: dto.type || 'MARRIAGE',
-        startDate: dto.startDate ? new Date(dto.startDate) : null,
+        startDate,
         startPlace: dto.startPlace,
-        endDate: dto.endDate ? new Date(dto.endDate) : null,
+        endDate,
         endReason: dto.endReason,
         notes: dto.notes,
       },
@@ -86,18 +92,35 @@ export class UnionService {
   }
 
   async update(id: string, dto: UpdateUnionDto) {
-    await this.findOne(id);
+    const existingUnion = await this.findOne(id);
+
+    const startDate =
+      dto.startDate !== undefined
+        ? (dto.startDate ? new Date(dto.startDate) : null)
+        : existingUnion.startDate;
+    const endDate =
+      dto.endDate !== undefined
+        ? (dto.endDate ? new Date(dto.endDate) : null)
+        : existingUnion.endDate;
+
+    this.validateUnionChronology(startDate, endDate);
+    this.validateUnionPartnerChronology(
+      startDate,
+      endDate,
+      existingUnion.partner1,
+      existingUnion.partner2,
+    );
 
     return this.prisma.union.update({
       where: { id },
       data: {
         ...(dto.type !== undefined && { type: dto.type }),
         ...(dto.startDate !== undefined && {
-          startDate: dto.startDate ? new Date(dto.startDate) : null,
+          startDate,
         }),
         ...(dto.startPlace !== undefined && { startPlace: dto.startPlace }),
         ...(dto.endDate !== undefined && {
-          endDate: dto.endDate ? new Date(dto.endDate) : null,
+          endDate,
         }),
         ...(dto.endReason !== undefined && { endReason: dto.endReason }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
@@ -109,5 +132,47 @@ export class UnionService {
   async remove(id: string) {
     await this.findOne(id);
     return this.prisma.union.delete({ where: { id } });
+  }
+
+  private validateUnionChronology(
+    startDate: Date | null,
+    endDate: Date | null,
+  ) {
+    if (startDate && endDate && endDate < startDate) {
+      throw new BadRequestException(
+        'Incohérence d\'union: la date de fin ne peut pas être antérieure à la date de début.',
+      );
+    }
+  }
+
+  private validateUnionPartnerChronology(
+    startDate: Date | null,
+    endDate: Date | null,
+    partner1: { birthDate: Date | null },
+    partner2: { birthDate: Date | null },
+  ) {
+    if (startDate && partner1.birthDate && startDate < partner1.birthDate) {
+      throw new BadRequestException(
+        'Incohérence d\'union: la date de début est antérieure à la naissance du partenaire 1.',
+      );
+    }
+
+    if (startDate && partner2.birthDate && startDate < partner2.birthDate) {
+      throw new BadRequestException(
+        'Incohérence d\'union: la date de début est antérieure à la naissance du partenaire 2.',
+      );
+    }
+
+    if (endDate && partner1.birthDate && endDate < partner1.birthDate) {
+      throw new BadRequestException(
+        'Incohérence d\'union: la date de fin est antérieure à la naissance du partenaire 1.',
+      );
+    }
+
+    if (endDate && partner2.birthDate && endDate < partner2.birthDate) {
+      throw new BadRequestException(
+        'Incohérence d\'union: la date de fin est antérieure à la naissance du partenaire 2.',
+      );
+    }
   }
 }

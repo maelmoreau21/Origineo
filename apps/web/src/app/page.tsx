@@ -22,6 +22,7 @@ import {
   ReactFlowProvider,
   type Node,
   type Edge,
+  type Connection,
   BackgroundVariant,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -95,6 +96,23 @@ type TreePerson = {
 
 type LinkMode = 'PARENT' | 'CHILD' | 'SPOUSE';
 type LinkTarget = 'new' | 'existing';
+type DragLinkType = 'PARENT_CHILD' | 'UNION';
+
+type OperationKind = 'person' | 'relationship' | 'union';
+
+type HistoryOperation = {
+  opId: string;
+  kind: OperationKind;
+  payload: Record<string, any>;
+  createdId?: string;
+};
+
+type HistoryEntry = {
+  id: string;
+  label: string;
+  createdAt: number;
+  operations: HistoryOperation[];
+};
 
 function normalizePerson(person: TreePerson) {
   return {
@@ -138,6 +156,14 @@ function TreeFlow() {
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [focusModeEnabled, setFocusModeEnabled] = useState(true);
+  const [dragLinkType, setDragLinkType] = useState<DragLinkType>('PARENT_CHILD');
+  const [assistantCreateMissingParent, setAssistantCreateMissingParent] = useState(true);
+  const [loadedUnions, setLoadedUnions] = useState<any[]>([]);
+  const [historyState, setHistoryState] = useState<{ entries: HistoryEntry[]; index: number }>({
+    entries: [],
+    index: -1,
+  });
   const [newPersonForm, setNewPersonForm] = useState({
     givenNames: '',
     usageSurname: '',
@@ -163,6 +189,107 @@ function TreeFlow() {
   }, [nodes, selectedPersonId]);
 
   const selectedPersonName = personDisplayName(selectedPerson);
+  const selectedPersonNormalized = useMemo(
+    () => (selectedPerson ? normalizePerson(selectedPerson) : null),
+    [selectedPerson],
+  );
+  const canUndo = historyState.index >= 0;
+  const canRedo = historyState.index < historyState.entries.length - 1;
+
+  const makeOperationId = useCallback((prefix: string) => {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }, []);
+
+  const resolvePayloadRefs = useCallback((
+    payload: Record<string, any>,
+    createdMap: Record<string, string>,
+  ) => {
+    const resolved: Record<string, any> = {};
+
+    Object.entries(payload).forEach(([key, value]) => {
+      if (typeof value === 'string' && value.startsWith('@')) {
+        const refId = value.slice(1);
+        resolved[key] = createdMap[refId] || value;
+        return;
+      }
+
+      resolved[key] = value;
+    });
+
+    return resolved;
+  }, []);
+
+  const createEntity = useCallback(async (
+    kind: OperationKind,
+    payload: Record<string, any>,
+    accessToken: string,
+  ) => {
+    if (kind === 'person') {
+      const created = await personApi.create(payload, accessToken);
+      return created.data.id as string;
+    }
+
+    if (kind === 'relationship') {
+      const created = await relationshipApi.create(payload, accessToken);
+      return created.data.id as string;
+    }
+
+    const created = await unionApi.create(payload, accessToken);
+    return created.data.id as string;
+  }, []);
+
+  const deleteEntity = useCallback(async (
+    kind: OperationKind,
+    id: string,
+    accessToken: string,
+  ) => {
+    if (kind === 'person') {
+      await personApi.delete(id, accessToken);
+      return;
+    }
+
+    if (kind === 'relationship') {
+      await relationshipApi.delete(id, accessToken);
+      return;
+    }
+
+    await unionApi.delete(id, accessToken);
+  }, []);
+
+  const executeOperations = useCallback(async (
+    operations: HistoryOperation[],
+    accessToken: string,
+  ) => {
+    const createdMap: Record<string, string> = {};
+    const executed: HistoryOperation[] = [];
+
+    for (const operation of operations) {
+      const payload = resolvePayloadRefs(operation.payload, createdMap);
+      const createdId = await createEntity(operation.kind, payload, accessToken);
+      createdMap[operation.opId] = createdId;
+      executed.push({ ...operation, createdId });
+    }
+
+    return executed;
+  }, [createEntity, resolvePayloadRefs]);
+
+  const addHistoryEntry = useCallback((label: string, operations: HistoryOperation[]) => {
+    const entry: HistoryEntry = {
+      id: `history-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      label,
+      createdAt: Date.now(),
+      operations,
+    };
+
+    setHistoryState((prev) => {
+      const baseEntries = prev.entries.slice(0, prev.index + 1);
+      const nextEntries = [...baseEntries, entry];
+      return {
+        entries: nextEntries,
+        index: nextEntries.length - 1,
+      };
+    });
+  }, []);
 
   const clearActionState = useCallback(() => {
     setActionError(null);
@@ -199,42 +326,55 @@ function TreeFlow() {
     });
   }, []);
 
-  const attachPerson = useCallback(async (targetPersonId: string) => {
-    if (!selectedPersonId || !token) return;
+  const buildLinkOperation = useCallback((
+    opId: string,
+    targetPersonRef: string,
+  ): HistoryOperation | null => {
+    if (!selectedPersonId) return null;
 
     if (linkMode === 'PARENT') {
-      await relationshipApi.create(
-        {
-          parentId: targetPersonId,
+      return {
+        opId,
+        kind: 'relationship',
+        payload: {
+          parentId: targetPersonRef,
           childId: selectedPersonId,
           type: relationshipType,
         },
-        token,
-      );
-      return;
+      };
     }
 
     if (linkMode === 'CHILD') {
-      await relationshipApi.create(
-        {
+      return {
+        opId,
+        kind: 'relationship',
+        payload: {
           parentId: selectedPersonId,
-          childId: targetPersonId,
+          childId: targetPersonRef,
           type: relationshipType,
         },
-        token,
-      );
-      return;
+      };
     }
 
-    await unionApi.create(
-      {
+    return {
+      opId,
+      kind: 'union',
+      payload: {
         partner1Id: selectedPersonId,
-        partner2Id: targetPersonId,
+        partner2Id: targetPersonRef,
         type: unionType,
       },
-      token,
+    };
+  }, [selectedPersonId, linkMode, relationshipType, unionType]);
+
+  const existingPartnerId = useMemo(() => {
+    if (!selectedPersonId) return null;
+    const union = loadedUnions.find(
+      (u) => u.partner1Id === selectedPersonId || u.partner2Id === selectedPersonId,
     );
-  }, [selectedPersonId, token, linkMode, relationshipType, unionType]);
+    if (!union) return null;
+    return union.partner1Id === selectedPersonId ? union.partner2Id : union.partner1Id;
+  }, [loadedUnions, selectedPersonId]);
 
   const selectedPersonLabel = linkMode === 'PARENT'
     ? 'Ajouter un parent'
@@ -247,6 +387,72 @@ function TreeFlow() {
     : linkMode === 'CHILD'
       ? 'Enfant ajouté'
       : 'Conjoint ajouté';
+
+  const applyQuickTemplate = useCallback(
+    (template: 'MOTHER' | 'FATHER' | 'CHILD' | 'SPOUSE') => {
+      clearActionState();
+      setLinkTarget('new');
+
+      const defaultSurname =
+        selectedPersonNormalized?.birthSurname ||
+        selectedPersonNormalized?.usageSurname ||
+        '';
+
+      if (template === 'MOTHER') {
+        setLinkMode('PARENT');
+        setRelationshipType('BIOLOGICAL');
+        setNewPersonForm({
+          givenNames: '',
+          usageSurname: '',
+          birthSurname: defaultSurname,
+          gender: 'FEMALE',
+          birthDate: '',
+          birthPlace: selectedPersonNormalized?.birthPlace || '',
+        });
+        return;
+      }
+
+      if (template === 'FATHER') {
+        setLinkMode('PARENT');
+        setRelationshipType('BIOLOGICAL');
+        setNewPersonForm({
+          givenNames: '',
+          usageSurname: defaultSurname,
+          birthSurname: defaultSurname,
+          gender: 'MALE',
+          birthDate: '',
+          birthPlace: selectedPersonNormalized?.birthPlace || '',
+        });
+        return;
+      }
+
+      if (template === 'CHILD') {
+        setLinkMode('CHILD');
+        setRelationshipType('BIOLOGICAL');
+        setNewPersonForm({
+          givenNames: '',
+          usageSurname: defaultSurname,
+          birthSurname: defaultSurname,
+          gender: 'UNKNOWN',
+          birthDate: '',
+          birthPlace: '',
+        });
+        return;
+      }
+
+      setLinkMode('SPOUSE');
+      setUnionType('MARRIAGE');
+      setNewPersonForm({
+        givenNames: '',
+        usageSurname: '',
+        birthSurname: '',
+        gender: 'UNKNOWN',
+        birthDate: '',
+        birthPlace: '',
+      });
+    },
+    [clearActionState, selectedPersonNormalized],
+  );
 
   // Load root person on mount
   useEffect(() => {
@@ -366,6 +572,13 @@ function TreeFlow() {
   const loadTree = useCallback(async () => {
     if (!rootPersonId) return;
 
+    const requestedAncestors = focusModeEnabled
+      ? Math.min(ancestorGens, 2)
+      : ancestorGens;
+    const requestedDescendants = focusModeEnabled
+      ? Math.min(descendantGens, 2)
+      : descendantGens;
+
     // Abort previous request if still pending
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
@@ -378,8 +591,13 @@ function TreeFlow() {
     setError(null);
 
     try {
-      const result = await treeApi.getTree(rootPersonId, ancestorGens, descendantGens);
+      const result = await treeApi.getTree(
+        rootPersonId,
+        requestedAncestors,
+        requestedDescendants,
+      );
       const treeData = result.data;
+      setLoadedUnions(treeData.unions || []);
 
       // Convert to React Flow nodes
       const flowNodes: Node[] = treeData.nodes.map((node: any) => ({
@@ -461,6 +679,7 @@ function TreeFlow() {
     rootPersonId,
     ancestorGens,
     descendantGens,
+    focusModeEnabled,
     fitView,
     setNodes,
     setEdges,
@@ -470,6 +689,158 @@ function TreeFlow() {
   useEffect(() => {
     loadTree();
   }, [loadTree]);
+
+  const runWithHistory = useCallback(async (
+    label: string,
+    operations: HistoryOperation[],
+  ) => {
+    if (!ensureAdminSession() || !token) return null;
+
+    clearActionState();
+    setActionBusy(true);
+
+    try {
+      const executedOperations = await executeOperations(operations, token);
+      addHistoryEntry(label, executedOperations);
+      await loadTree();
+      return executedOperations;
+    } catch (err: any) {
+      setActionError(err.message || 'Action impossible.');
+      return null;
+    } finally {
+      setActionBusy(false);
+    }
+  }, [addHistoryEntry, clearActionState, ensureAdminSession, executeOperations, loadTree, token]);
+
+  const undoLastAction = useCallback(async () => {
+    if (!ensureAdminSession() || !token || historyState.index < 0) return;
+
+    const entryToUndo = historyState.entries[historyState.index];
+    if (!entryToUndo) return;
+
+    clearActionState();
+    setActionBusy(true);
+
+    try {
+      for (const operation of [...entryToUndo.operations].reverse()) {
+        if (!operation.createdId) continue;
+        try {
+          await deleteEntity(operation.kind, operation.createdId, token);
+        } catch (err: any) {
+          const message = String(err?.message || '');
+          if (!message.includes('not found') && !message.includes('HTTP 404')) {
+            throw err;
+          }
+        }
+      }
+
+      setHistoryState((prev) => ({
+        entries: prev.entries,
+        index: prev.index - 1,
+      }));
+
+      await loadTree();
+      setActionSuccess(`Annulé: ${entryToUndo.label}`);
+    } catch (err: any) {
+      setActionError(err.message || 'Impossible d\'annuler cette action.');
+    } finally {
+      setActionBusy(false);
+    }
+  }, [clearActionState, deleteEntity, ensureAdminSession, historyState.entries, historyState.index, loadTree, token]);
+
+  const redoLastAction = useCallback(async () => {
+    if (!ensureAdminSession() || !token) return;
+
+    const redoIndex = historyState.index + 1;
+    const entryToRedo = historyState.entries[redoIndex];
+    if (!entryToRedo) return;
+
+    clearActionState();
+    setActionBusy(true);
+
+    try {
+      const recreatedOperations = await executeOperations(entryToRedo.operations, token);
+
+      setHistoryState((prev) => {
+        const nextEntries = [...prev.entries];
+        nextEntries[redoIndex] = {
+          ...nextEntries[redoIndex],
+          operations: recreatedOperations,
+          createdAt: Date.now(),
+        };
+        return {
+          entries: nextEntries,
+          index: redoIndex,
+        };
+      });
+
+      await loadTree();
+      setActionSuccess(`Rétabli: ${entryToRedo.label}`);
+    } catch (err: any) {
+      setActionError(err.message || 'Impossible de rétablir cette action.');
+    } finally {
+      setActionBusy(false);
+    }
+  }, [clearActionState, ensureAdminSession, executeOperations, historyState.entries, historyState.index, loadTree, token]);
+
+  const focusOnSelected = useCallback(() => {
+    if (!selectedPersonId) return;
+    setRootPersonId(selectedPersonId);
+    if (focusModeEnabled) {
+      setAncestorGens((prev) => Math.min(prev, 2));
+      setDescendantGens((prev) => Math.min(prev, 2));
+    }
+  }, [focusModeEnabled, selectedPersonId]);
+
+  const onConnect = useCallback(async (connection: Connection) => {
+    const sourceId = connection.source;
+    const targetId = connection.target;
+
+    if (!sourceId || !targetId) return;
+    if (sourceId === targetId) {
+      setActionError('Lien invalide: une personne ne peut pas être liée à elle-même.');
+      return;
+    }
+
+    const operation: HistoryOperation = dragLinkType === 'PARENT_CHILD'
+      ? {
+          opId: makeOperationId('drag-relationship'),
+          kind: 'relationship',
+          payload: {
+            parentId: sourceId,
+            childId: targetId,
+            type: relationshipType,
+          },
+        }
+      : {
+          opId: makeOperationId('drag-union'),
+          kind: 'union',
+          payload: {
+            partner1Id: sourceId,
+            partner2Id: targetId,
+            type: unionType,
+          },
+        };
+
+    const label = dragLinkType === 'PARENT_CHILD'
+      ? 'Glisser-relier: parent/enfant'
+      : 'Glisser-relier: union';
+
+    const executed = await runWithHistory(label, [operation]);
+    if (executed) {
+      setActionSuccess(
+        dragLinkType === 'PARENT_CHILD'
+          ? 'Lien parent/enfant créé par glisser-relier.'
+          : 'Union créée par glisser-relier.',
+      );
+    }
+  }, [
+    dragLinkType,
+    makeOperationId,
+    relationshipType,
+    unionType,
+    runWithHistory,
+  ]);
 
   // Click on node → select person for direct editing actions
   const onNodeClick = useCallback((_: any, node: Node) => {
@@ -509,7 +880,7 @@ function TreeFlow() {
   }, [selectedPersonId, ensureAdminSession, token, clearActionState, loadTree]);
 
   const createAndAttachNewPerson = useCallback(async () => {
-    if (!selectedPersonId || !ensureAdminSession() || !token) return;
+    if (!selectedPersonId) return;
 
     const payload = toNewPersonPayload();
     if (!payload.givenNames) {
@@ -517,49 +888,133 @@ function TreeFlow() {
       return;
     }
 
-    clearActionState();
-    setActionBusy(true);
-    try {
-      const created = await personApi.create(payload, token);
-      const newPersonId = created.data.id as string;
-      await attachPerson(newPersonId);
-      await loadTree();
-      setSelectedPersonId(newPersonId);
-      setActionSuccess(`${linkVerb} avec succès.`);
-      resetNewPersonForm();
-    } catch (err: any) {
-      setActionError(err.message || 'Création impossible.');
-    } finally {
-      setActionBusy(false);
+    const newPersonOpId = makeOperationId('person-new');
+    const operations: HistoryOperation[] = [
+      {
+        opId: newPersonOpId,
+        kind: 'person',
+        payload,
+      },
+    ];
+
+    const linkOperation = buildLinkOperation(
+      makeOperationId('link-new'),
+      `@${newPersonOpId}`,
+    );
+
+    if (!linkOperation) return;
+    operations.push(linkOperation);
+
+    let actionLabel = selectedPersonLabel;
+
+    if (linkMode === 'CHILD' && assistantCreateMissingParent) {
+      if (existingPartnerId) {
+        operations.push({
+          opId: makeOperationId('assistant-co-parent-link'),
+          kind: 'relationship',
+          payload: {
+            parentId: existingPartnerId,
+            childId: `@${newPersonOpId}`,
+            type: relationshipType,
+          },
+        });
+        actionLabel = 'Ajouter un enfant (assistant foyer)';
+      } else {
+        const coParentOpId = makeOperationId('assistant-co-parent');
+        const surname =
+          selectedPersonNormalized?.birthSurname ||
+          selectedPersonNormalized?.usageSurname ||
+          undefined;
+
+        operations.push({
+          opId: coParentOpId,
+          kind: 'person',
+          payload: {
+            givenNames: 'Parent a completer',
+            usageSurname: surname,
+            birthSurname: surname,
+            gender:
+              selectedPersonNormalized?.gender === 'MALE'
+                ? 'FEMALE'
+                : selectedPersonNormalized?.gender === 'FEMALE'
+                  ? 'MALE'
+                  : 'UNKNOWN',
+          },
+        });
+
+        operations.push({
+          opId: makeOperationId('assistant-union'),
+          kind: 'union',
+          payload: {
+            partner1Id: selectedPersonId,
+            partner2Id: `@${coParentOpId}`,
+            type: unionType,
+          },
+        });
+
+        operations.push({
+          opId: makeOperationId('assistant-co-parent-link'),
+          kind: 'relationship',
+          payload: {
+            parentId: `@${coParentOpId}`,
+            childId: `@${newPersonOpId}`,
+            type: relationshipType,
+          },
+        });
+
+        actionLabel = 'Ajouter un enfant + creer le foyer';
+      }
     }
+
+    const executed = await runWithHistory(actionLabel, operations);
+    if (!executed) return;
+
+    const createdPerson = executed.find((op) => op.opId === newPersonOpId)?.createdId;
+    if (createdPerson) {
+      setSelectedPersonId(createdPerson);
+    }
+    setActionSuccess(`${linkVerb} avec succès.`);
+    resetNewPersonForm();
   }, [
     selectedPersonId,
-    ensureAdminSession,
-    token,
     toNewPersonPayload,
-    clearActionState,
-    attachPerson,
-    loadTree,
+    makeOperationId,
+    buildLinkOperation,
+    runWithHistory,
+    linkMode,
+    assistantCreateMissingParent,
+    existingPartnerId,
+    relationshipType,
+    selectedPersonNormalized,
+    unionType,
     linkVerb,
+    selectedPersonLabel,
     resetNewPersonForm,
+    setActionError,
   ]);
 
   const linkExistingPerson = useCallback(async (personId: string) => {
-    if (!selectedPersonId || !ensureAdminSession()) return;
+    if (!selectedPersonId) return;
 
-    clearActionState();
-    setActionBusy(true);
-    try {
-      await attachPerson(personId);
-      await loadTree();
-      setActionSuccess(`${linkVerb} avec succès.`);
-      setSelectedPersonId(personId);
-    } catch (err: any) {
-      setActionError(err.message || 'Liaison impossible.');
-    } finally {
-      setActionBusy(false);
-    }
-  }, [selectedPersonId, ensureAdminSession, clearActionState, attachPerson, loadTree, linkVerb]);
+    const operation = buildLinkOperation(
+      makeOperationId('link-existing'),
+      personId,
+    );
+    if (!operation) return;
+
+    const executed = await runWithHistory(selectedPersonLabel, [operation]);
+    if (!executed) return;
+
+    setActionSuccess(`${linkVerb} avec succès.`);
+    setSelectedPersonId(personId);
+  }, [
+    selectedPersonId,
+    buildLinkOperation,
+    makeOperationId,
+    runWithHistory,
+    selectedPersonLabel,
+    linkVerb,
+  ]);
 
   const changeRootFromSearch = useCallback((person: any) => {
     setRootPersonId(person.id);
@@ -629,6 +1084,101 @@ function TreeFlow() {
                 ))}
               </select>
             </div>
+
+            <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
+                Navigation:
+              </label>
+              <select
+                className="input"
+                style={{ width: 115, padding: 'var(--space-2)' }}
+                value={focusModeEnabled ? 'FOCUS' : 'EXPANDED'}
+                onChange={(e) => setFocusModeEnabled(e.target.value === 'FOCUS')}
+                id="select-navigation-mode"
+              >
+                <option value="FOCUS">Focus</option>
+                <option value="EXPANDED">Étendu</option>
+              </select>
+            </div>
+
+            {selectedPersonId && (
+              <button
+                className="btn btn-ghost"
+                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                onClick={focusOnSelected}
+              >
+                Focus sélection
+              </button>
+            )}
+
+            <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
+                Glisser-relier:
+              </label>
+              <select
+                className="input"
+                style={{ width: 130, padding: 'var(--space-2)' }}
+                value={dragLinkType}
+                onChange={(e) => setDragLinkType(e.target.value as DragLinkType)}
+                id="select-drag-link-mode"
+              >
+                <option value="PARENT_CHILD">Parenté</option>
+                <option value="UNION">Union</option>
+              </select>
+            </div>
+
+            {dragLinkType === 'PARENT_CHILD' ? (
+              <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
+                  Type:
+                </label>
+                <select
+                  className="input"
+                  style={{ width: 120, padding: 'var(--space-2)' }}
+                  value={relationshipType}
+                  onChange={(e) => setRelationshipType(e.target.value)}
+                >
+                  <option value="BIOLOGICAL">Bio</option>
+                  <option value="ADOPTIVE">Adoptive</option>
+                  <option value="FOSTER">Accueil</option>
+                </select>
+              </div>
+            ) : (
+              <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
+                  Union:
+                </label>
+                <select
+                  className="input"
+                  style={{ width: 120, padding: 'var(--space-2)' }}
+                  value={unionType}
+                  onChange={(e) => setUnionType(e.target.value)}
+                >
+                  <option value="MARRIAGE">Mariage</option>
+                  <option value="PACS">PACS</option>
+                  <option value="PARTNERSHIP">Partenariat</option>
+                  <option value="OTHER">Autre</option>
+                </select>
+              </div>
+            )}
+
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+              disabled={!canUndo || actionBusy}
+              onClick={undoLastAction}
+            >
+              Annuler
+            </button>
+
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+              disabled={!canRedo || actionBusy}
+              onClick={redoLastAction}
+            >
+              Rétablir
+            </button>
 
             <div style={{ position: 'relative', minWidth: 260 }}>
               <input
@@ -815,6 +1365,7 @@ function TreeFlow() {
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
             onNodeClick={onNodeClick}
             onNodeDoubleClick={onNodeDoubleClick}
             nodeTypes={nodeTypes}
@@ -864,7 +1415,7 @@ function TreeFlow() {
             border: '1px solid var(--color-border-subtle)',
             pointerEvents: 'none',
           }}>
-            Clic → sélectionner · Double-clic → recentrer · Molette → zoom
+            Clic → sélectionner · Double-clic → recentrer · Glisser-relier → créer lien · Molette → zoom
           </div>
         )}
       </div>
@@ -888,10 +1439,10 @@ function TreeFlow() {
                 </div>
                 <h3 style={{ marginTop: 'var(--space-1)', marginBottom: 'var(--space-1)' }}>{selectedPersonName || 'Sans nom'}</h3>
                 <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                  {normalizePerson(selectedPerson).birthDate
-                    ? `Né(e) le ${new Date(normalizePerson(selectedPerson).birthDate as string).toLocaleDateString('fr-FR')}`
+                  {selectedPersonNormalized?.birthDate
+                    ? `Né(e) le ${new Date(selectedPersonNormalized.birthDate as string).toLocaleDateString('fr-FR')}`
                     : 'Date de naissance inconnue'}
-                  {normalizePerson(selectedPerson).birthPlace ? ` · ${normalizePerson(selectedPerson).birthPlace}` : ''}
+                  {selectedPersonNormalized?.birthPlace ? ` · ${selectedPersonNormalized.birthPlace}` : ''}
                 </div>
               </div>
               <button className="btn btn-ghost" style={{ padding: 'var(--space-1) var(--space-2)' }} onClick={() => setSelectedPersonId(null)}>
@@ -928,6 +1479,42 @@ function TreeFlow() {
 
               {authChecked && isAdmin && (
                 <>
+                  <div style={{ marginTop: 'var(--space-2)' }}>
+                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-2)' }}>
+                      Actions rapides par défaut
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
+                        onClick={() => applyQuickTemplate('MOTHER')}
+                      >
+                        + Mère
+                      </button>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
+                        onClick={() => applyQuickTemplate('FATHER')}
+                      >
+                        + Père
+                      </button>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
+                        onClick={() => applyQuickTemplate('CHILD')}
+                      >
+                        + Enfant
+                      </button>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
+                        onClick={() => applyQuickTemplate('SPOUSE')}
+                      >
+                        + Conjoint
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
                     <label className="input-label">Action</label>
                     <select className="input" value={linkMode} onChange={(e) => { setLinkMode(e.target.value as LinkMode); clearActionState(); }}>
@@ -965,6 +1552,43 @@ function TreeFlow() {
                         <option value="PARTNERSHIP">Partenariat</option>
                         <option value="OTHER">Autre</option>
                       </select>
+                    </div>
+                  )}
+
+                  {linkMode === 'CHILD' && linkTarget === 'new' && (
+                    <div
+                      style={{
+                        marginTop: 'var(--space-3)',
+                        padding: 'var(--space-2) var(--space-3)',
+                        borderRadius: 'var(--radius-md)',
+                        border: '1px solid var(--color-border-subtle)',
+                        background: 'var(--color-bg-secondary)',
+                      }}
+                    >
+                      <label
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 'var(--space-2)',
+                          fontSize: 'var(--text-xs)',
+                          color: 'var(--color-text-secondary)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={assistantCreateMissingParent}
+                          onChange={(e) => setAssistantCreateMissingParent(e.target.checked)}
+                        />
+                        Assistant familial: compléter automatiquement le foyer
+                      </label>
+                      {assistantCreateMissingParent && (
+                        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: 'var(--space-2)' }}>
+                          {existingPartnerId
+                            ? 'Le second parent existant sera relié automatiquement à l\'enfant.'
+                            : 'Un second parent provisoire et une union seront créés automatiquement.'}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1067,6 +1691,41 @@ function TreeFlow() {
                       {actionSuccess}
                     </div>
                   )}
+
+                  <div style={{ marginTop: 'var(--space-4)' }}>
+                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-2)' }}>
+                      Journal de session ({historyState.entries.length})
+                    </div>
+                    <div style={{ display: 'grid', gap: 'var(--space-2)', maxHeight: 180, overflowY: 'auto' }}>
+                      {historyState.entries.length === 0 && (
+                        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                          Aucune action enregistrée pour le moment.
+                        </div>
+                      )}
+                      {[...historyState.entries].reverse().slice(0, 8).map((entry, reverseIndex) => {
+                        const realIndex = historyState.entries.length - 1 - reverseIndex;
+                        const isApplied = realIndex <= historyState.index;
+                        return (
+                          <div
+                            key={entry.id}
+                            style={{
+                              fontSize: 'var(--text-xs)',
+                              color: isApplied ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
+                              padding: 'var(--space-2)',
+                              borderRadius: 'var(--radius-md)',
+                              border: '1px solid var(--color-border-subtle)',
+                              background: isApplied ? 'var(--color-bg-secondary)' : 'var(--color-bg-primary)',
+                            }}
+                          >
+                            <div>{entry.label}</div>
+                            <div style={{ marginTop: '2px', opacity: 0.8 }}>
+                              {new Date(entry.createdAt).toLocaleTimeString('fr-FR')} · {isApplied ? 'actif' : 'annulé'}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </>
               )}
             </div>

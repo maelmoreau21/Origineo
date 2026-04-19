@@ -2,7 +2,7 @@
 // Person Service
 // ══════════════════════════════════════
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePersonDto, UpdatePersonDto } from './dto/person.dto';
 import { Prisma } from '@prisma/client';
@@ -12,6 +12,10 @@ export class PersonService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreatePersonDto) {
+    const birthDate = dto.birthDate ? new Date(dto.birthDate) : null;
+    const deathDate = dto.deathDate ? new Date(dto.deathDate) : null;
+    this.validatePersonChronology(birthDate, deathDate);
+
     // If setting as root default, unset any existing root
     if (dto.isRootDefault) {
       await this.prisma.person.updateMany({
@@ -26,9 +30,9 @@ export class PersonService {
         birthSurname: dto.birthSurname,
         givenNames: dto.givenNames,
         gender: dto.gender || 'UNKNOWN',
-        birthDate: dto.birthDate ? new Date(dto.birthDate) : null,
+        birthDate,
         birthPlace: dto.birthPlace,
-        deathDate: dto.deathDate ? new Date(dto.deathDate) : null,
+        deathDate,
         deathPlace: dto.deathPlace,
         professions: dto.professions || [],
         notes: dto.notes,
@@ -93,7 +97,18 @@ export class PersonService {
 
   async update(id: string, dto: UpdatePersonDto) {
     // Verify person exists
-    await this.findOne(id);
+    const existingPerson = await this.findOne(id);
+
+    const nextBirthDate =
+      dto.birthDate !== undefined
+        ? (dto.birthDate ? new Date(dto.birthDate) : null)
+        : existingPerson.birthDate;
+    const nextDeathDate =
+      dto.deathDate !== undefined
+        ? (dto.deathDate ? new Date(dto.deathDate) : null)
+        : existingPerson.deathDate;
+
+    this.validatePersonChronology(nextBirthDate, nextDeathDate);
 
     // If setting as root default, unset any existing root
     if (dto.isRootDefault) {
@@ -110,10 +125,10 @@ export class PersonService {
     if (dto.givenNames !== undefined) data.givenNames = dto.givenNames;
     if (dto.gender !== undefined) data.gender = dto.gender;
     if (dto.birthDate !== undefined)
-      data.birthDate = dto.birthDate ? new Date(dto.birthDate) : null;
+      data.birthDate = nextBirthDate;
     if (dto.birthPlace !== undefined) data.birthPlace = dto.birthPlace;
     if (dto.deathDate !== undefined)
-      data.deathDate = dto.deathDate ? new Date(dto.deathDate) : null;
+      data.deathDate = nextDeathDate;
     if (dto.deathPlace !== undefined) data.deathPlace = dto.deathPlace;
     if (dto.professions !== undefined) data.professions = dto.professions;
     if (dto.notes !== undefined) data.notes = dto.notes;
@@ -129,5 +144,16 @@ export class PersonService {
   async remove(id: string) {
     await this.findOne(id);
     return this.prisma.person.delete({ where: { id } });
+  }
+
+  private validatePersonChronology(
+    birthDate: Date | null,
+    deathDate: Date | null,
+  ) {
+    if (birthDate && deathDate && deathDate < birthDate) {
+      throw new BadRequestException(
+        'Incohérence de dates: la date de décès ne peut pas être antérieure à la date de naissance.',
+      );
+    }
   }
 }

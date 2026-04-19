@@ -33,6 +33,8 @@ export class RelationshipService {
       throw new NotFoundException(`Child with ID "${dto.childId}" not found`);
     }
 
+    this.validateRelationshipChronology(parent, child, dto.type || 'BIOLOGICAL');
+
     // Check for circular relationships
     const wouldCreateCycle = await this.checkCycle(dto.childId, dto.parentId);
     if (wouldCreateCycle) {
@@ -52,6 +54,35 @@ export class RelationshipService {
         child: true,
       },
     });
+  }
+
+  private validateRelationshipChronology(
+    parent: { birthDate: Date | null; deathDate: Date | null },
+    child: { birthDate: Date | null; deathDate: Date | null },
+    relationshipType: string,
+  ) {
+    if (parent.birthDate && child.birthDate && parent.birthDate > child.birthDate) {
+      throw new BadRequestException(
+        'Incohérence de filiation: un parent ne peut pas être né après son enfant.',
+      );
+    }
+
+    if (
+      relationshipType === 'BIOLOGICAL' &&
+      parent.deathDate &&
+      child.birthDate &&
+      parent.deathDate < child.birthDate
+    ) {
+      throw new BadRequestException(
+        'Incohérence de filiation biologique: le parent ne peut pas être décédé avant la naissance de l\'enfant.',
+      );
+    }
+
+    if (child.birthDate && child.deathDate && child.deathDate < child.birthDate) {
+      throw new BadRequestException(
+        'Incohérence de dates enfant: la date de décès ne peut pas être antérieure à la date de naissance.',
+      );
+    }
   }
 
   async findByPerson(personId: string) {
