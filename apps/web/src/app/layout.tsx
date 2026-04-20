@@ -4,6 +4,7 @@
 
 import type { Metadata } from 'next';
 import '../styles/globals.css';
+import SessionGate from '@/components/auth/SessionGate';
 
 export const metadata: Metadata = {
   title: 'Origineo — Arbre Généalogique',
@@ -22,7 +23,9 @@ export default function RootLayout({
       <body suppressHydrationWarning>
         <div id="app-root">
           <Sidebar />
-          <main className="main-content">{children}</main>
+          <main className="main-content">
+            <SessionGate>{children}</SessionGate>
+          </main>
         </div>
       </body>
     </html>

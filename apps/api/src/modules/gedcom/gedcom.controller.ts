@@ -28,7 +28,6 @@ import { GedcomMergeService, MergeDecision } from './gedcom-merge.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('GEDCOM')
 @Controller('gedcom')
@@ -122,7 +121,6 @@ export class GedcomController {
   }
 
   // ─── Export ────────────────────────────────
-  @Public()
   @Get('export')
   @ApiOperation({ summary: 'Export tree as GEDCOM 5.5.1 file' })
   @ApiQuery({

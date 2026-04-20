@@ -5,52 +5,71 @@
 // ══════════════════════════════════════
 
 import { useState, useEffect, useCallback } from 'react';
-import { authApi, personApi, gedcomApi, documentApi } from '@/lib/api';
+import { authApi, personApi, gedcomApi } from '@/lib/api';
 
-type Tab = 'persons' | 'add' | 'gedcom' | 'login';
+type Tab = 'settings' | 'data' | 'tree' | 'login';
 
 export default function AdminPage() {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<Tab>('login');
+  const [sessionRestoring, setSessionRestoring] = useState(true);
+  const isAdminUser = user?.role === 'ADMIN';
+  const isRootUser = user?.isRoot === true;
 
   // Try to restore session from localStorage
   useEffect(() => {
+    let isMounted = true;
     const saved = localStorage.getItem('origineo_token');
-    if (saved) {
-      setToken(saved);
-      authApi.getProfile(saved).then((res) => {
-        setUser(res.data);
-        setActiveTab('persons');
-      }).catch(() => {
-        localStorage.removeItem('origineo_token');
-      });
+    if (!saved) {
+      setSessionRestoring(false);
+      return;
     }
+
+    setToken(saved);
+    authApi.getProfile(saved).then((res) => {
+      if (!isMounted) return;
+      const profile = res.data;
+      if (profile?.role !== 'ADMIN') {
+        window.location.href = '/';
+        return;
+      }
+
+      setUser(profile);
+      setActiveTab('data');
+    }).catch(() => {
+      if (!isMounted) return;
+      localStorage.removeItem('origineo_token');
+      setToken(null);
+      setUser(null);
+      setActiveTab('login');
+    }).finally(() => {
+      if (isMounted) {
+        setSessionRestoring(false);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  const handleLogin = async (email: string, password: string) => {
+  const handleLogin = async (identifier: string, password: string) => {
     try {
-      const result = await authApi.login(email, password);
+      const result = await authApi.login(identifier, password);
       const accessToken = result.data.accessToken;
       setToken(accessToken);
       setUser(result.data.user);
       localStorage.setItem('origineo_token', accessToken);
-      setActiveTab('persons');
+
+      if (result.data.user?.role !== 'ADMIN') {
+        window.location.href = '/';
+        return;
+      }
+
+      setActiveTab('data');
     } catch (err: any) {
       alert(err.message || 'Échec de la connexion');
-    }
-  };
-
-  const handleRegister = async (email: string, password: string, displayName: string) => {
-    try {
-      const result = await authApi.register(email, password, displayName);
-      const accessToken = result.data.accessToken;
-      setToken(accessToken);
-      setUser(result.data.user);
-      localStorage.setItem('origineo_token', accessToken);
-      setActiveTab('persons');
-    } catch (err: any) {
-      alert(err.message || 'Échec de l\'inscription');
     }
   };
 
@@ -72,6 +91,7 @@ export default function AdminPage() {
               <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginTop: 'var(--space-1)' }}>
                 Connecté en tant que <strong>{user.displayName || user.email}</strong>
                 <span className="badge badge-accent" style={{ marginLeft: 'var(--space-2)' }}>{user.role}</span>
+                {isRootUser && <span className="badge badge-amber" style={{ marginLeft: 'var(--space-2)' }}>ROOT</span>}
               </p>
             )}
           </div>
@@ -83,17 +103,36 @@ export default function AdminPage() {
         </div>
 
         {/* Auth Gate */}
-        {!token ? (
-          <LoginForm onLogin={handleLogin} onRegister={handleRegister} />
+        {sessionRestoring ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--space-8) 0' }}>
+            <div className="glass-card" style={{ textAlign: 'center', minWidth: 280 }}>
+              <div className="spinner" style={{ margin: '0 auto var(--space-3)' }} />
+              <p style={{ color: 'var(--color-text-secondary)' }}>Chargement de la session admin...</p>
+            </div>
+          </div>
+        ) : !token ? (
+          <LoginForm onLogin={handleLogin} />
+        ) : !isAdminUser ? (
+          <div className="glass-card" style={{ textAlign: 'center', maxWidth: 520, margin: '0 auto' }}>
+            <h3 style={{ marginBottom: 'var(--space-2)' }}>Acces admin requis</h3>
+            <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
+              Ce compte n&apos;a pas les droits administrateur pour cette zone.
+            </p>
+            <a href="/" className="btn btn-secondary">
+              Retourner a l&apos;arbre
+            </a>
+          </div>
         ) : (
           <>
             {/* Tabs */}
             <div style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-6)', borderBottom: '1px solid var(--color-border)', paddingBottom: 'var(--space-2)' }}>
-              {([
-                { key: 'persons', label: '👥 Personnes' },
-                { key: 'add', label: '➕ Ajouter' },
-                { key: 'gedcom', label: '📄 GEDCOM' },
-              ] as { key: Tab; label: string }[]).map(({ key, label }) => (
+              {(
+                [
+                { key: 'settings', label: '⚙️ Paramètres' },
+                { key: 'data', label: '🗂️ Données' },
+                { key: 'tree', label: '🌳 Arbre' },
+              ] as { key: Tab; label: string }[]
+              ).map(({ key, label }) => (
                 <button
                   key={key}
                   className={`btn ${activeTab === key ? 'btn-primary' : 'btn-ghost'}`}
@@ -105,9 +144,9 @@ export default function AdminPage() {
               ))}
             </div>
 
-            {activeTab === 'persons' && <PersonsList token={token} />}
-            {activeTab === 'add' && <AddPersonForm token={token} />}
-            {activeTab === 'gedcom' && <GedcomPanel token={token} />}
+            {activeTab === 'settings' && <SettingsPanel token={token} isRootUser={isRootUser} />}
+            {activeTab === 'data' && <DataPanel token={token} />}
+            {activeTab === 'tree' && <TreeWorkspacePanel />}
           </>
         )}
       </div>
@@ -118,26 +157,18 @@ export default function AdminPage() {
 // ─── Login Form ─────────────────────────────
 function LoginForm({
   onLogin,
-  onRegister,
 }: {
-  onLogin: (email: string, password: string) => Promise<void>;
-  onRegister: (email: string, password: string, displayName: string) => Promise<void>;
+  onLogin: (identifier: string, password: string) => Promise<void>;
 }) {
-  const [isRegister, setIsRegister] = useState(false);
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('root');
   const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      if (isRegister) {
-        await onRegister(email, password, displayName);
-      } else {
-        await onLogin(email, password);
-      }
+      await onLogin(identifier, password);
     } finally {
       setLoading(false);
     }
@@ -146,40 +177,561 @@ function LoginForm({
   return (
     <div style={{ maxWidth: 420, margin: '0 auto' }}>
       <div className="glass-card animate-fade-in-up">
-        <h2 style={{ textAlign: 'center', marginBottom: 'var(--space-6)' }}>
-          {isRegister ? '📝 Inscription' : '🔐 Connexion'}
-        </h2>
+        <h2 style={{ textAlign: 'center', marginBottom: 'var(--space-6)' }}>🔐 Connexion</h2>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-          {isRegister && (
-            <div className="input-group">
-              <label className="input-label">Nom d&apos;affichage</label>
-              <input className="input" type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Votre nom" id="input-display-name" />
-            </div>
-          )}
-
           <div className="input-group">
-            <label className="input-label">Email</label>
-            <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@origineo.app" required id="input-email" />
+            <label className="input-label">Identifiant</label>
+            <input
+              className="input"
+              type="text"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              placeholder="root"
+              required
+              id="input-identifier"
+            />
           </div>
 
           <div className="input-group">
             <label className="input-label">Mot de passe</label>
-            <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Min. 8 caractères" minLength={8} required id="input-password" />
+            <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Votre mot de passe" required id="input-password" />
           </div>
 
           <button className="btn btn-primary" type="submit" disabled={loading} id="submit-auth" style={{ width: '100%' }}>
-            {loading ? <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> : isRegister ? 'S\'inscrire' : 'Se connecter'}
+            {loading ? <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> : 'Se connecter'}
           </button>
         </form>
 
         <p style={{ textAlign: 'center', marginTop: 'var(--space-4)', fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>
-          {isRegister ? 'Déjà inscrit ?' : 'Pas encore de compte ?'}{' '}
-          <button onClick={() => setIsRegister(!isRegister)} style={{ color: 'var(--color-accent)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
-            {isRegister ? 'Se connecter' : 'S\'inscrire'}
-          </button>
+          Compte initial par défaut: <strong>root</strong> / <strong>root</strong>
         </p>
       </div>
+    </div>
+  );
+}
+
+function SettingsPanel({ token, isRootUser }: { token: string; isRootUser: boolean }) {
+  if (!isRootUser) {
+    return (
+      <div className="glass-card" style={{ maxWidth: 760 }}>
+        <h3 style={{ marginBottom: 'var(--space-2)' }}>🔐 Paramètres d&apos;application</h3>
+        <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
+          La configuration LDAP/AD, la gestion des comptes et les droits sont réservés au compte root.
+        </p>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)' }}>
+          Demandez au root de modifier les mappings de groupes LDAP, de créer des comptes admin ou d&apos;ajuster les rôles.
+        </p>
+      </div>
+    );
+  }
+
+  return <AccountsPanel token={token} />;
+}
+
+function DataPanel({ token }: { token: string }) {
+  return (
+    <div style={{ display: 'grid', gap: 'var(--space-6)' }}>
+      <div className="glass-card">
+        <h3 style={{ marginBottom: 'var(--space-2)' }}>🗂️ Gestion des données</h3>
+        <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
+          Cette section centralise l&apos;ajout de personnes, le rechargement de la liste, les imports/exports GEDCOM, la réparation de l&apos;intégrité de l&apos;arbre et les opérations de nettoyage.
+        </p>
+      </div>
+
+      <PersonsList token={token} />
+      <AddPersonForm token={token} />
+      <GedcomPanel token={token} />
+      <TreeRepairPanel token={token} />
+      <TreeDangerZone token={token} />
+    </div>
+  );
+}
+
+function TreeWorkspacePanel() {
+  return (
+    <div style={{ display: 'grid', gap: 'var(--space-6)' }}>
+      <div className="glass-card" style={{ maxWidth: 860 }}>
+        <h3 style={{ marginBottom: 'var(--space-3)' }}>🌳 Espace arbre</h3>
+        <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
+          Ouvrez l&apos;espace arbre interactif pour naviguer, relier les personnes, gérer les unions, et supprimer une branche depuis une personne sélectionnée.
+        </p>
+        <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+          <a href="/" className="btn btn-primary">Ouvrir l&apos;arbre</a>
+          <a href="/search" className="btn btn-secondary">Aller à la recherche</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TreeDangerZone({ token }: { token: string }) {
+  const [confirmText, setConfirmText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [resultMessage, setResultMessage] = useState<string | null>(null);
+
+  const handleDeleteAll = async () => {
+    if (confirmText !== 'SUPPRIMER TOUT') {
+      alert('Tapez exactement SUPPRIMER TOUT pour confirmer.');
+      return;
+    }
+
+    if (!window.confirm('Confirmer la suppression de toutes les personnes de l\'arbre ?')) {
+      return;
+    }
+
+    setBusy(true);
+    setResultMessage(null);
+
+    try {
+      const result = await personApi.deleteAll(token);
+      const stats = result.data || {};
+      setResultMessage(
+        `Suppression terminée: ${stats.personsDeleted || 0} personnes, ${stats.relationshipsDeleted || 0} relations, ${stats.unionsDeleted || 0} unions, ${stats.documentsDeleted || 0} documents.`,
+      );
+      setConfirmText('');
+    } catch (err: any) {
+      alert(err.message || 'Impossible de supprimer l\'arbre complet.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="glass-card" style={{ borderColor: 'var(--color-rose)' }}>
+      <h3 style={{ marginBottom: 'var(--space-2)', color: 'var(--color-rose)' }}>🧨 Zone sensible</h3>
+      <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
+        Supprime tout l&apos;arbre: personnes, relations, unions et métadonnées de documents liées.
+      </p>
+
+      <div className="input-group" style={{ maxWidth: 360, marginBottom: 'var(--space-3)' }}>
+        <label className="input-label">Écrivez SUPPRIMER TOUT pour autoriser l&apos;action</label>
+        <input
+          className="input"
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder="SUPPRIMER TOUT"
+        />
+      </div>
+
+      <button className="btn btn-secondary" onClick={handleDeleteAll} disabled={busy}>
+        {busy ? 'Suppression...' : 'Supprimer tout l\'arbre'}
+      </button>
+
+      {resultMessage && (
+        <p style={{ marginTop: 'var(--space-3)', color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
+          {resultMessage}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function TreeRepairPanel({ token }: { token: string }) {
+  const [report, setReport] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [repairingRoot, setRepairingRoot] = useState(false);
+  const [busyConnectComponentId, setBusyConnectComponentId] = useState<string | null>(null);
+  const [busyDeleteComponentId, setBusyDeleteComponentId] = useState<string | null>(null);
+  const [componentOptions, setComponentOptions] = useState<
+    Record<string, {
+      anchorPersonId: string;
+      linkMode: 'PARENT_OF_COMPONENT' | 'CHILD_OF_COMPONENT' | 'UNION';
+      relationshipType: 'BIOLOGICAL' | 'ADOPTIVE' | 'FOSTER';
+      unionType: 'MARRIAGE' | 'PACS' | 'PARTNERSHIP' | 'OTHER';
+    }>
+  >({});
+
+  const loadReport = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await personApi.getIntegrityReport(token);
+      const payload = result.data || null;
+      setReport(payload);
+
+      const defaultAnchorPersonId =
+        payload?.root?.personId || payload?.mainComponent?.representativePersonId || '';
+      const disconnectedComponents = payload?.disconnectedComponents || [];
+
+      setComponentOptions((previous) => {
+        const next: Record<string, {
+          anchorPersonId: string;
+          linkMode: 'PARENT_OF_COMPONENT' | 'CHILD_OF_COMPONENT' | 'UNION';
+          relationshipType: 'BIOLOGICAL' | 'ADOPTIVE' | 'FOSTER';
+          unionType: 'MARRIAGE' | 'PACS' | 'PARTNERSHIP' | 'OTHER';
+        }> = {};
+
+        disconnectedComponents.forEach((component: any) => {
+          next[component.id] = previous[component.id] || {
+            anchorPersonId: defaultAnchorPersonId,
+            linkMode: 'PARENT_OF_COMPONENT',
+            relationshipType: 'FOSTER',
+            unionType: 'OTHER',
+          };
+
+          if (!next[component.id].anchorPersonId) {
+            next[component.id].anchorPersonId = defaultAnchorPersonId;
+          }
+        });
+
+        return next;
+      });
+    } catch (err: any) {
+      setError(err.message || 'Impossible de charger le diagnostic de l\'arbre.');
+      setReport(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadReport();
+  }, [loadReport]);
+
+  const updateComponentOption = (
+    componentId: string,
+    patch: Partial<{
+      anchorPersonId: string;
+      linkMode: 'PARENT_OF_COMPONENT' | 'CHILD_OF_COMPONENT' | 'UNION';
+      relationshipType: 'BIOLOGICAL' | 'ADOPTIVE' | 'FOSTER';
+      unionType: 'MARRIAGE' | 'PACS' | 'PARTNERSHIP' | 'OTHER';
+    }>,
+  ) => {
+    setComponentOptions((previous) => ({
+      ...previous,
+      [componentId]: {
+        anchorPersonId: previous[componentId]?.anchorPersonId || '',
+        linkMode: previous[componentId]?.linkMode || 'PARENT_OF_COMPONENT',
+        relationshipType: previous[componentId]?.relationshipType || 'FOSTER',
+        unionType: previous[componentId]?.unionType || 'OTHER',
+        ...patch,
+      },
+    }));
+  };
+
+  const handleRepairRoot = async () => {
+    setRepairingRoot(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const result = await personApi.repairRootDefault(token);
+      const payload = result.data || {};
+
+      if (payload.changed) {
+        setSuccess(
+          `Racine corrigée: ${payload.label || payload.personId || 'personne inconnue'}`,
+        );
+      } else {
+        setSuccess('Racine déjà cohérente avec le composant principal.');
+      }
+
+      await loadReport();
+    } catch (err: any) {
+      setError(err.message || 'Impossible de corriger la racine.');
+    } finally {
+      setRepairingRoot(false);
+    }
+  };
+
+  const handleConnectComponent = async (component: any) => {
+    const options = componentOptions[component.id];
+
+    setBusyConnectComponentId(component.id);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await personApi.connectDisconnectedComponent(
+        {
+          componentPersonId: component.representativePersonId,
+          anchorPersonId: options?.anchorPersonId || undefined,
+          linkMode: options?.linkMode || 'PARENT_OF_COMPONENT',
+          relationshipType: options?.relationshipType || 'FOSTER',
+          unionType: options?.unionType || 'OTHER',
+        },
+        token,
+      );
+
+      setSuccess(`Composant ${component.id} rattaché avec succès.`);
+      await loadReport();
+    } catch (err: any) {
+      setError(err.message || 'Impossible de rattacher ce composant.');
+    } finally {
+      setBusyConnectComponentId(null);
+    }
+  };
+
+  const handleDeleteComponent = async (component: any) => {
+    if (
+      !window.confirm(
+        `Supprimer le composant ${component.id} (${component.size} personne(s)) ?`,
+      )
+    ) {
+      return;
+    }
+
+    setBusyDeleteComponentId(component.id);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const result = await personApi.deleteDisconnectedComponent(
+        component.representativePersonId,
+        token,
+      );
+      const stats = result.data || {};
+
+      setSuccess(
+        `Composant supprimé: ${stats.personsDeleted || 0} personnes, ${stats.relationshipsDeleted || 0} relations, ${stats.unionsDeleted || 0} unions.`,
+      );
+      await loadReport();
+    } catch (err: any) {
+      setError(err.message || 'Impossible de supprimer ce composant.');
+    } finally {
+      setBusyDeleteComponentId(null);
+    }
+  };
+
+  const anchorOptions = report?.mainComponent?.samplePeople || [];
+  const disconnectedComponents = report?.disconnectedComponents || [];
+
+  return (
+    <div className="glass-card" style={{ display: 'grid', gap: 'var(--space-4)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+        <div>
+          <h3 style={{ marginBottom: 'var(--space-2)' }}>🩺 Réparer l&apos;arbre</h3>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
+            Détecte les personnes isolées et les branches non connectées après import GEDCOM, puis propose des actions de réparation.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+          <button className="btn btn-ghost" onClick={loadReport} disabled={loading}>
+            {loading ? 'Analyse...' : 'Analyser'}
+          </button>
+          <button className="btn btn-secondary" onClick={handleRepairRoot} disabled={repairingRoot || loading}>
+            {repairingRoot ? 'Correction...' : 'Corriger racine'}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-rose)', color: 'var(--color-rose)', background: 'var(--color-rose-subtle)' }}>
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-emerald)', color: 'var(--color-emerald)', background: 'var(--color-emerald-subtle)' }}>
+          {success}
+        </div>
+      )}
+
+      {!loading && report && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--space-2)' }}>
+            <StatCard icon="👥" label="Personnes" value={report.totalPersons || 0} />
+            <StatCard icon="🧩" label="Composants" value={report.connectedComponents || 0} color="var(--color-amber)" />
+            <StatCard icon="🔌" label="Déconnectés" value={disconnectedComponents.length} color="var(--color-rose)" />
+            <StatCard icon="🧍" label="Isolées" value={report.isolatedPersons || 0} color="var(--color-amber)" />
+          </div>
+
+          {Array.isArray(report.suggestions) && report.suggestions.length > 0 && (
+            <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border-subtle)', background: 'var(--color-bg-primary)' }}>
+              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
+                Suggestions automatiques
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '1.1rem', color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', display: 'grid', gap: 'var(--space-1)' }}>
+                {report.suggestions.map((item: string) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border-subtle)', background: 'var(--color-bg-primary)' }}>
+            <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, marginBottom: 'var(--space-1)' }}>
+              Composant principal
+            </div>
+            {report.mainComponent ? (
+              <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
+                {report.mainComponent.size} personne(s), référent: <strong>{report.mainComponent.representativeLabel}</strong>
+                {report.root?.personId && (
+                  <>
+                    {' '}· Racine actuelle: <strong>{report.root.label || report.root.personId}</strong>
+                    {' '}({report.root.inMainComponent ? 'dans le principal' : 'hors principal'})
+                  </>
+                )}
+              </div>
+            ) : (
+              <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
+                Aucun composant principal détecté.
+              </div>
+            )}
+          </div>
+
+          {disconnectedComponents.length === 0 ? (
+            <div style={{ padding: 'var(--space-4)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-emerald)', background: 'var(--color-emerald-subtle)', color: 'var(--color-emerald)' }}>
+              ✅ Aucun composant déconnecté: toutes les personnes sont reliées au même arbre.
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
+              {disconnectedComponents.map((component: any) => {
+                const options = componentOptions[component.id] || {
+                  anchorPersonId:
+                    report?.root?.personId ||
+                    report?.mainComponent?.representativePersonId ||
+                    '',
+                  linkMode: 'PARENT_OF_COMPONENT',
+                  relationshipType: 'FOSTER',
+                  unionType: 'OTHER',
+                };
+
+                const connectBusy = busyConnectComponentId === component.id;
+                const deleteBusy = busyDeleteComponentId === component.id;
+
+                return (
+                  <div
+                    key={component.id}
+                    style={{
+                      border: '1px solid var(--color-border-subtle)',
+                      borderRadius: 'var(--radius-lg)',
+                      background: 'var(--color-bg-primary)',
+                      padding: 'var(--space-3)',
+                      display: 'grid',
+                      gap: 'var(--space-3)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>
+                          {component.id} · {component.size} personne(s)
+                        </div>
+                        <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-xs)' }}>
+                          Référent: {component.representativeLabel}
+                          {component.isolated ? ' · isolée' : ''}
+                        </div>
+                      </div>
+                      <span className={`badge ${component.isolated ? 'badge-amber' : 'badge-rose'}`}>
+                        {component.isolated ? 'Isolée' : 'Déconnectée'}
+                      </span>
+                    </div>
+
+                    {Array.isArray(component.samplePeople) && component.samplePeople.length > 0 && (
+                      <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-xs)' }}>
+                        Exemples: {component.samplePeople.map((person: any) => person.label).join(' · ')}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: 'var(--space-2)' }}>
+                      <div className="input-group">
+                        <label className="input-label">Ancrer sur</label>
+                        <select
+                          className="input"
+                          value={options.anchorPersonId}
+                          onChange={(e) => updateComponentOption(component.id, { anchorPersonId: e.target.value })}
+                        >
+                          <option value="">Auto (racine / référent principal)</option>
+                          {anchorOptions.map((anchor: any) => (
+                            <option key={anchor.id} value={anchor.id}>
+                              {anchor.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="input-group">
+                        <label className="input-label">Mode lien</label>
+                        <select
+                          className="input"
+                          value={options.linkMode}
+                          onChange={(e) =>
+                            updateComponentOption(component.id, {
+                              linkMode: e.target.value as
+                                | 'PARENT_OF_COMPONENT'
+                                | 'CHILD_OF_COMPONENT'
+                                | 'UNION',
+                            })
+                          }
+                        >
+                          <option value="PARENT_OF_COMPONENT">Ancrage → composant (parent)</option>
+                          <option value="CHILD_OF_COMPONENT">Composant → ancrage (parent)</option>
+                          <option value="UNION">Union entre les deux</option>
+                        </select>
+                      </div>
+
+                      <div className="input-group">
+                        <label className="input-label">Type filiation</label>
+                        <select
+                          className="input"
+                          value={options.relationshipType}
+                          onChange={(e) =>
+                            updateComponentOption(component.id, {
+                              relationshipType: e.target.value as
+                                | 'BIOLOGICAL'
+                                | 'ADOPTIVE'
+                                | 'FOSTER',
+                            })
+                          }
+                          disabled={options.linkMode === 'UNION'}
+                        >
+                          <option value="FOSTER">Accueil (technique)</option>
+                          <option value="BIOLOGICAL">Biologique</option>
+                          <option value="ADOPTIVE">Adoptive</option>
+                        </select>
+                      </div>
+
+                      <div className="input-group">
+                        <label className="input-label">Type union</label>
+                        <select
+                          className="input"
+                          value={options.unionType}
+                          onChange={(e) =>
+                            updateComponentOption(component.id, {
+                              unionType: e.target.value as
+                                | 'MARRIAGE'
+                                | 'PACS'
+                                | 'PARTNERSHIP'
+                                | 'OTHER',
+                            })
+                          }
+                          disabled={options.linkMode !== 'UNION'}
+                        >
+                          <option value="OTHER">Autre</option>
+                          <option value="MARRIAGE">Mariage</option>
+                          <option value="PACS">PACS</option>
+                          <option value="PARTNERSHIP">Partenariat</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)' }}>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => handleConnectComponent(component)}
+                        disabled={connectBusy || deleteBusy}
+                      >
+                        {connectBusy ? 'Rattachement...' : 'Rattacher au principal'}
+                      </button>
+                      <button
+                        className="btn btn-ghost"
+                        onClick={() => handleDeleteComponent(component)}
+                        disabled={connectBusy || deleteBusy}
+                      >
+                        {deleteBusy ? 'Suppression...' : 'Supprimer composant'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -188,64 +740,190 @@ function LoginForm({
 function PersonsList({ token }: { token: string }) {
   const [persons, setPersons] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(50);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [busyPersonId, setBusyPersonId] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const loadPersons = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await personApi.getAll(page, limit);
+      const payload = result.data || {};
+      const rows = payload.data || [];
+
+      setPersons(rows);
+      setTotal(payload.total || 0);
+      setTotalPages(Math.max(1, payload.totalPages || 1));
+    } catch (err: any) {
+      setError(err.message || 'Impossible de charger la liste des personnes.');
+      setPersons([]);
+      setTotal(0);
+      setTotalPages(1);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, limit]);
 
   useEffect(() => {
-    personApi.getAll(1, 100).then((res) => {
-      setPersons(res.data?.data || []);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  }, []);
+    loadPersons();
+  }, [loadPersons, refreshTick]);
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="skeleton" style={{ height: 60, borderRadius: 'var(--radius-lg)' }} />
-        ))}
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
-  if (persons.length === 0) {
-    return (
-      <div className="glass-card" style={{ textAlign: 'center', padding: 'var(--space-12)' }}>
-        <p style={{ fontSize: 'var(--text-xl)', marginBottom: 'var(--space-2)' }}>📭</p>
-        <p style={{ color: 'var(--color-text-secondary)' }}>Aucune personne dans la base de données.</p>
-        <p style={{ color: 'var(--color-text-tertiary)', fontSize: 'var(--text-sm)', marginTop: 'var(--space-2)' }}>
-          Utilisez l&apos;onglet &quot;Ajouter&quot; ou importez un fichier GEDCOM.
-        </p>
-      </div>
-    );
-  }
+  const personName = (person: any) => {
+    const surname = person.usageSurname || person.birthSurname || '';
+    return `${person.givenNames}${surname ? ` ${surname}` : ''}`.trim();
+  };
+
+  const refresh = () => {
+    setRefreshTick((value) => value + 1);
+  };
+
+  const handleDeletePerson = async (person: any) => {
+    const label = personName(person) || person.id;
+    if (!window.confirm(`Supprimer la personne "${label}" ?`)) {
+      return;
+    }
+
+    setBusyPersonId(person.id);
+    try {
+      await personApi.delete(person.id, token);
+      refresh();
+    } catch (err: any) {
+      alert(err.message || 'Suppression impossible.');
+    } finally {
+      setBusyPersonId(null);
+    }
+  };
+
+  const handleDeleteBranch = async (person: any) => {
+    const label = personName(person) || person.id;
+    if (!window.confirm(`Supprimer la branche de "${label}" (la personne et ses descendants) ?`)) {
+      return;
+    }
+
+    setBusyPersonId(person.id);
+    try {
+      await personApi.deleteBranch(person.id, token, true);
+      refresh();
+    } catch (err: any) {
+      alert(err.message || 'Suppression de branche impossible.');
+    } finally {
+      setBusyPersonId(null);
+    }
+  };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-      <p style={{ color: 'var(--color-text-tertiary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-2)' }}>
-        {persons.length} personne{persons.length > 1 ? 's' : ''} enregistrée{persons.length > 1 ? 's' : ''}
+    <div className="glass-card" style={{ display: 'grid', gap: 'var(--space-3)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        <h3>👥 Personnes</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          <label className="input-label" style={{ margin: 0 }}>Lignes</label>
+          <select
+            className="input"
+            value={limit}
+            onChange={(e) => {
+              setLimit(Number(e.target.value));
+              setPage(1);
+            }}
+            style={{ width: 90, padding: 'var(--space-2)' }}
+          >
+            {[25, 50, 100, 200].map((size) => (
+              <option key={size} value={size}>{size}</option>
+            ))}
+          </select>
+          <button className="btn btn-ghost" onClick={refresh}>Recharger</button>
+        </div>
+      </div>
+
+      <p style={{ color: 'var(--color-text-tertiary)', fontSize: 'var(--text-sm)' }}>
+        Total: {total} personne{total > 1 ? 's' : ''} · Page {page}/{Math.max(1, totalPages)}
       </p>
-      {persons.map((p: any) => {
-        const name = p.givenNames + (p.usageSurname ? ` ${p.usageSurname}` : p.birthSurname ? ` ${p.birthSurname}` : '');
-        return (
-          <div key={p.id} style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: 'var(--space-3) var(--space-4)',
-            background: 'var(--color-bg-secondary)',
-            borderRadius: 'var(--radius-lg)',
-            border: '1px solid var(--color-border-subtle)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-              <span>{p.gender === 'MALE' ? '♂' : p.gender === 'FEMALE' ? '♀' : '◯'}</span>
-              <a href={`/person/${p.id}`} style={{ fontWeight: 500, color: 'var(--color-text-primary)' }}>{name}</a>
-              {p.isRootDefault && <span className="badge badge-accent">Racine</span>}
-            </div>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
-              {p.id.slice(0, 8)}
-            </span>
-          </div>
-        );
-      })}
+
+      {loading && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="skeleton" style={{ height: 54, borderRadius: 'var(--radius-lg)' }} />
+          ))}
+        </div>
+      )}
+
+      {!loading && error && (
+        <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-rose)', color: 'var(--color-rose)', background: 'var(--color-rose-subtle)' }}>
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && persons.length === 0 && (
+        <div style={{ textAlign: 'center', padding: 'var(--space-8)', color: 'var(--color-text-secondary)' }}>
+          Aucune personne trouvée pour cette page.
+        </div>
+      )}
+
+      {!loading && !error && persons.length > 0 && (
+        <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+          {persons.map((person: any) => {
+            const label = personName(person);
+            const isBusy = busyPersonId === person.id;
+
+            return (
+              <div
+                key={person.id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr auto',
+                  gap: 'var(--space-2)',
+                  alignItems: 'center',
+                  padding: 'var(--space-3) var(--space-4)',
+                  background: 'var(--color-bg-secondary)',
+                  borderRadius: 'var(--radius-lg)',
+                  border: '1px solid var(--color-border-subtle)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
+                  <span>{person.gender === 'MALE' ? '♂' : person.gender === 'FEMALE' ? '♀' : '◯'}</span>
+                  <a href={`/person/${person.id}`} style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{label}</a>
+                  {person.isRootDefault && <span className="badge badge-accent">Racine</span>}
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                    {person.id.slice(0, 8)}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <button className="btn btn-ghost" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-3)' }} disabled={isBusy} onClick={() => handleDeleteBranch(person)}>
+                    Supprimer branche
+                  </button>
+                  <button className="btn btn-ghost" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-3)' }} disabled={isBusy} onClick={() => handleDeletePerson(person)}>
+                    Supprimer personne
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-2)' }}>
+        <button className="btn btn-ghost" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+          ← Précédent
+        </button>
+        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>
+          Page {page} / {Math.max(1, totalPages)}
+        </span>
+        <button className="btn btn-ghost" disabled={page >= totalPages || loading} onClick={() => setPage((value) => value + 1)}>
+          Suivant →
+        </button>
+      </div>
     </div>
   );
 }
@@ -383,6 +1061,7 @@ function AddPersonForm({ token }: { token: string }) {
 // ─── GEDCOM Panel (Import / Export / Merge) ──
 function GedcomPanel({ token }: { token: string }) {
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [importResult, setImportResult] = useState<any>(null);
 
   // Merge state
@@ -467,6 +1146,25 @@ function GedcomPanel({ token }: { token: string }) {
     }));
   };
 
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const { blob, filename } = await gedcomApi.exportFile(token);
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de l\'export GEDCOM');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
 
@@ -504,9 +1202,19 @@ function GedcomPanel({ token }: { token: string }) {
           <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
             Téléchargez votre arbre au format GEDCOM 5.5.1.
           </p>
-          <a href={gedcomApi.exportUrl()} className="btn btn-secondary" style={{ display: 'flex', justifyContent: 'center' }} id="export-gedcom-button">
-            📥 Télécharger l&apos;arbre complet (.ged)
-          </a>
+          <button
+            className="btn btn-secondary"
+            style={{ width: '100%', display: 'flex', justifyContent: 'center' }}
+            id="export-gedcom-button"
+            onClick={handleExport}
+            disabled={exporting}
+          >
+            {exporting ? (
+              <><span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> Export en cours...</>
+            ) : (
+              '📥 Télécharger l\'arbre complet (.ged)'
+            )}
+          </button>
         </div>
       </div>
 
@@ -684,6 +1392,418 @@ function GedcomPanel({ token }: { token: string }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Accounts & LDAP Panel (Root) ──────────
+function AccountsPanel({ token }: { token: string }) {
+  const [users, setUsers] = useState<any[]>([]);
+  const [roleDrafts, setRoleDrafts] = useState<Record<string, 'ADMIN' | 'VISITOR'>>({});
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [savingUser, setSavingUser] = useState(false);
+  const [loadingLdap, setLoadingLdap] = useState(true);
+  const [savingLdap, setSavingLdap] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const [newUserForm, setNewUserForm] = useState({
+    identifier: '',
+    password: '',
+    displayName: '',
+    role: 'VISITOR' as 'ADMIN' | 'VISITOR',
+  });
+
+  const [ldapForm, setLdapForm] = useState({
+    enabled: false,
+    url: '',
+    bindDn: '',
+    bindPassword: '',
+    userSearchBase: '',
+    userSearchFilter: '(|(sAMAccountName={{username}})(mail={{username}})(uid={{username}}))',
+    groupAttribute: 'memberOf',
+    adminGroupDns: '',
+    userGroupDns: '',
+    hasBindPassword: false,
+  });
+
+  const clearMessages = () => {
+    setSuccess(null);
+    setError(null);
+  };
+
+  const loadUsers = useCallback(async () => {
+    setLoadingUsers(true);
+    try {
+      const result = await authApi.listUsers(token);
+      const fetchedUsers = result.data || [];
+      setUsers(fetchedUsers);
+
+      const drafts: Record<string, 'ADMIN' | 'VISITOR'> = {};
+      fetchedUsers.forEach((user: any) => {
+        drafts[user.id] = user.role;
+      });
+      setRoleDrafts(drafts);
+    } catch (err: any) {
+      setError(err.message || 'Impossible de charger les comptes.');
+    } finally {
+      setLoadingUsers(false);
+    }
+  }, [token]);
+
+  const loadLdap = useCallback(async () => {
+    setLoadingLdap(true);
+    try {
+      const result = await authApi.getLdapConfig(token);
+      const config = result.data || {};
+
+      setLdapForm({
+        enabled: Boolean(config.enabled),
+        url: config.url || '',
+        bindDn: config.bindDn || '',
+        bindPassword: '',
+        userSearchBase: config.userSearchBase || '',
+        userSearchFilter: config.userSearchFilter || '(|(sAMAccountName={{username}})(mail={{username}})(uid={{username}}))',
+        groupAttribute: config.groupAttribute || 'memberOf',
+        adminGroupDns: (config.adminGroupDns || []).join(', '),
+        userGroupDns: (config.userGroupDns || []).join(', '),
+        hasBindPassword: Boolean(config.hasBindPassword),
+      });
+    } catch (err: any) {
+      setError(err.message || 'Impossible de charger la configuration LDAP.');
+    } finally {
+      setLoadingLdap(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadUsers();
+    loadLdap();
+  }, [loadUsers, loadLdap]);
+
+  const parseDnList = (value: string) =>
+    value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+    setSavingUser(true);
+
+    try {
+      await authApi.createUser(
+        {
+          identifier: newUserForm.identifier,
+          password: newUserForm.password,
+          displayName: newUserForm.displayName || undefined,
+          role: newUserForm.role,
+        },
+        token,
+      );
+
+      setSuccess(`Compte ${newUserForm.identifier} créé avec succès.`);
+      setNewUserForm({
+        identifier: '',
+        password: '',
+        displayName: '',
+        role: 'VISITOR',
+      });
+      await loadUsers();
+    } catch (err: any) {
+      setError(err.message || 'Impossible de créer le compte.');
+    } finally {
+      setSavingUser(false);
+    }
+  };
+
+  const handleApplyRole = async (userId: string) => {
+    clearMessages();
+    setSavingUser(true);
+
+    try {
+      const nextRole = roleDrafts[userId];
+      await authApi.updateUserRole(userId, nextRole, token);
+      setSuccess('Rôle utilisateur mis à jour.');
+      await loadUsers();
+    } catch (err: any) {
+      setError(err.message || 'Impossible de mettre à jour le rôle.');
+    } finally {
+      setSavingUser(false);
+    }
+  };
+
+  const handleSaveLdap = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+    setSavingLdap(true);
+
+    try {
+      await authApi.updateLdapConfig(
+        {
+          enabled: ldapForm.enabled,
+          url: ldapForm.url || undefined,
+          bindDn: ldapForm.bindDn || undefined,
+          bindPassword: ldapForm.bindPassword || undefined,
+          userSearchBase: ldapForm.userSearchBase || undefined,
+          userSearchFilter: ldapForm.userSearchFilter || undefined,
+          groupAttribute: ldapForm.groupAttribute || undefined,
+          adminGroupDns: parseDnList(ldapForm.adminGroupDns),
+          userGroupDns: parseDnList(ldapForm.userGroupDns),
+        },
+        token,
+      );
+
+      setSuccess('Configuration LDAP enregistrée.');
+      await loadLdap();
+    } catch (err: any) {
+      setError(err.message || 'Impossible de sauvegarder la configuration LDAP.');
+    } finally {
+      setSavingLdap(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: 'var(--space-6)' }}>
+      {error && (
+        <div style={{ padding: 'var(--space-3) var(--space-4)', borderRadius: 'var(--radius-lg)', background: 'var(--color-rose-subtle)', border: '1px solid var(--color-rose)', color: 'var(--color-rose)' }}>
+          {error}
+        </div>
+      )}
+      {success && (
+        <div style={{ padding: 'var(--space-3) var(--space-4)', borderRadius: 'var(--radius-lg)', background: 'var(--color-emerald-subtle)', border: '1px solid var(--color-emerald)', color: 'var(--color-emerald)' }}>
+          {success}
+        </div>
+      )}
+
+      <div className="glass-card">
+        <h3 style={{ marginBottom: 'var(--space-4)' }}>👤 Création de comptes</h3>
+        <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
+          Le compte root peut créer des comptes ADMIN et UTILISATEUR.
+        </p>
+
+        <form onSubmit={handleCreateUser} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 0.8fr auto', gap: 'var(--space-3)', alignItems: 'end' }}>
+          <div className="input-group">
+            <label className="input-label">Identifiant *</label>
+            <input
+              className="input"
+              value={newUserForm.identifier}
+              onChange={(e) => setNewUserForm((prev) => ({ ...prev, identifier: e.target.value }))}
+              placeholder="admin"
+              required
+            />
+          </div>
+
+          <div className="input-group">
+            <label className="input-label">Mot de passe *</label>
+            <input
+              className="input"
+              type="password"
+              value={newUserForm.password}
+              onChange={(e) => setNewUserForm((prev) => ({ ...prev, password: e.target.value }))}
+              placeholder="Min. 8 caractères"
+              minLength={8}
+              required
+            />
+          </div>
+
+          <div className="input-group">
+            <label className="input-label">Nom affiché</label>
+            <input
+              className="input"
+              value={newUserForm.displayName}
+              onChange={(e) => setNewUserForm((prev) => ({ ...prev, displayName: e.target.value }))}
+              placeholder="Nom complet"
+            />
+          </div>
+
+          <div className="input-group">
+            <label className="input-label">Rôle</label>
+            <select
+              className="input"
+              value={newUserForm.role}
+              onChange={(e) => setNewUserForm((prev) => ({ ...prev, role: e.target.value as 'ADMIN' | 'VISITOR' }))}
+            >
+              <option value="VISITOR">UTILISATEUR</option>
+              <option value="ADMIN">ADMIN</option>
+            </select>
+          </div>
+
+          <button className="btn btn-primary" type="submit" disabled={savingUser}>
+            {savingUser ? 'Création...' : 'Créer'}
+          </button>
+        </form>
+
+        <div style={{ marginTop: 'var(--space-5)' }}>
+          <h4 style={{ marginBottom: 'var(--space-3)' }}>Comptes existants</h4>
+          {loadingUsers ? (
+            <div className="spinner" />
+          ) : (
+            <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+              {users.map((account) => (
+                <div
+                  key={account.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1.5fr 1fr 0.8fr auto auto',
+                    alignItems: 'center',
+                    gap: 'var(--space-3)',
+                    padding: 'var(--space-3)',
+                    border: '1px solid var(--color-border-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--color-bg-primary)',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{account.identifier}</div>
+                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                      {account.displayName || 'Sans nom'}
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                    Créé le {new Date(account.createdAt).toLocaleDateString('fr-FR')}
+                  </div>
+
+                  <span className={`badge ${account.role === 'ADMIN' ? 'badge-accent' : 'badge-emerald'}`}>
+                    {account.role === 'ADMIN' ? 'ADMIN' : 'UTILISATEUR'}
+                  </span>
+
+                  <select
+                    className="input"
+                    style={{ minWidth: 150 }}
+                    value={roleDrafts[account.id] || account.role}
+                    onChange={(e) =>
+                      setRoleDrafts((prev) => ({
+                        ...prev,
+                        [account.id]: e.target.value as 'ADMIN' | 'VISITOR',
+                      }))
+                    }
+                    disabled={account.isRoot || savingUser}
+                  >
+                    <option value="VISITOR">UTILISATEUR</option>
+                    <option value="ADMIN">ADMIN</option>
+                  </select>
+
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => handleApplyRole(account.id)}
+                    disabled={account.isRoot || savingUser || (roleDrafts[account.id] || account.role) === account.role}
+                  >
+                    Appliquer
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <form className="glass-card" onSubmit={handleSaveLdap}>
+        <h3 style={{ marginBottom: 'var(--space-4)' }}>🔐 LDAP / Active Directory</h3>
+        <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
+          Les utilisateurs LDAP sont automatiquement classés ADMIN ou UTILISATEUR selon les groupes DN configurés.
+        </p>
+
+        {loadingLdap ? (
+          <div className="spinner" />
+        ) : (
+          <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <input
+                type="checkbox"
+                checked={ldapForm.enabled}
+                onChange={(e) => setLdapForm((prev) => ({ ...prev, enabled: e.target.checked }))}
+              />
+              <span>Activer l&apos;authentification LDAP/AD</span>
+            </label>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+              <div className="input-group">
+                <label className="input-label">URL LDAP</label>
+                <input
+                  className="input"
+                  value={ldapForm.url}
+                  onChange={(e) => setLdapForm((prev) => ({ ...prev, url: e.target.value }))}
+                  placeholder="ldap://ad.example.local:389"
+                />
+              </div>
+              <div className="input-group">
+                <label className="input-label">Base de recherche utilisateur</label>
+                <input
+                  className="input"
+                  value={ldapForm.userSearchBase}
+                  onChange={(e) => setLdapForm((prev) => ({ ...prev, userSearchBase: e.target.value }))}
+                  placeholder="OU=Users,DC=example,DC=local"
+                />
+              </div>
+              <div className="input-group">
+                <label className="input-label">Bind DN (optionnel)</label>
+                <input
+                  className="input"
+                  value={ldapForm.bindDn}
+                  onChange={(e) => setLdapForm((prev) => ({ ...prev, bindDn: e.target.value }))}
+                  placeholder="CN=svc-origineo,..."
+                />
+              </div>
+              <div className="input-group">
+                <label className="input-label">
+                  Bind Password {ldapForm.hasBindPassword ? '(laissez vide pour conserver)' : ''}
+                </label>
+                <input
+                  className="input"
+                  type="password"
+                  value={ldapForm.bindPassword}
+                  onChange={(e) => setLdapForm((prev) => ({ ...prev, bindPassword: e.target.value }))}
+                />
+              </div>
+              <div className="input-group" style={{ gridColumn: '1 / -1' }}>
+                <label className="input-label">Filtre utilisateur LDAP</label>
+                <input
+                  className="input"
+                  value={ldapForm.userSearchFilter}
+                  onChange={(e) => setLdapForm((prev) => ({ ...prev, userSearchFilter: e.target.value }))}
+                  placeholder="(|(sAMAccountName={{username}})(mail={{username}}))"
+                />
+              </div>
+              <div className="input-group" style={{ gridColumn: '1 / -1' }}>
+                <label className="input-label">Attribut groupes</label>
+                <input
+                  className="input"
+                  value={ldapForm.groupAttribute}
+                  onChange={(e) => setLdapForm((prev) => ({ ...prev, groupAttribute: e.target.value }))}
+                  placeholder="memberOf"
+                />
+              </div>
+              <div className="input-group" style={{ gridColumn: '1 / -1' }}>
+                <label className="input-label">Groupes ADMIN (DN, séparés par des virgules)</label>
+                <input
+                  className="input"
+                  value={ldapForm.adminGroupDns}
+                  onChange={(e) => setLdapForm((prev) => ({ ...prev, adminGroupDns: e.target.value }))}
+                  placeholder="CN=Origineo_Admins,OU=Groups,DC=example,DC=local"
+                />
+              </div>
+              <div className="input-group" style={{ gridColumn: '1 / -1' }}>
+                <label className="input-label">Groupes UTILISATEUR (DN, optionnel)</label>
+                <input
+                  className="input"
+                  value={ldapForm.userGroupDns}
+                  onChange={(e) => setLdapForm((prev) => ({ ...prev, userGroupDns: e.target.value }))}
+                  placeholder="CN=Origineo_Users,OU=Groups,DC=example,DC=local"
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-primary" type="submit" disabled={savingLdap}>
+                {savingLdap ? 'Enregistrement...' : 'Enregistrer la configuration LDAP'}
+              </button>
+            </div>
+          </div>
+        )}
+      </form>
     </div>
   );
 }

@@ -8,11 +8,20 @@ interface FetchOptions extends RequestInit {
   token?: string;
 }
 
+function resolveToken(explicitToken?: string): string | undefined {
+  if (explicitToken) return explicitToken;
+  if (typeof window === 'undefined') return undefined;
+
+  const stored = window.localStorage.getItem('origineo_token');
+  return stored || undefined;
+}
+
 async function apiFetch<T>(
   endpoint: string,
   options: FetchOptions = {},
 ): Promise<T> {
-  const { token, ...fetchOptions } = options;
+  const { token: explicitToken, ...fetchOptions } = options;
+  const token = resolveToken(explicitToken);
 
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
@@ -29,6 +38,13 @@ async function apiFetch<T>(
   });
 
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.localStorage.removeItem('origineo_token');
+      if (!window.location.pathname.startsWith('/admin')) {
+        window.location.href = '/admin';
+      }
+    }
+
     const error = await response.json().catch(() => ({ message: 'Network error' }));
     throw new Error(error.message || `HTTP ${response.status}`);
   }
@@ -63,6 +79,51 @@ export const personApi = {
 
   delete: (id: string, token: string) =>
     apiFetch<any>(`/persons/${id}`, {
+      method: 'DELETE',
+      token,
+    }),
+
+  deleteBranch: (id: string, token: string, includeRoot = true) =>
+    apiFetch<any>(`/persons/${id}/branch?includeRoot=${includeRoot}`, {
+      method: 'DELETE',
+      token,
+    }),
+
+  deleteAll: (token: string) =>
+    apiFetch<any>('/persons?confirm=DELETE_ALL', {
+      method: 'DELETE',
+      token,
+    }),
+
+  getIntegrityReport: (token: string) =>
+    apiFetch<any>('/persons/integrity/report', {
+      token,
+    }),
+
+  repairRootDefault: (token: string) =>
+    apiFetch<any>('/persons/integrity/repair-root', {
+      method: 'POST',
+      token,
+    }),
+
+  connectDisconnectedComponent: (
+    data: {
+      componentPersonId: string;
+      anchorPersonId?: string;
+      linkMode?: 'PARENT_OF_COMPONENT' | 'CHILD_OF_COMPONENT' | 'UNION';
+      relationshipType?: 'BIOLOGICAL' | 'ADOPTIVE' | 'FOSTER';
+      unionType?: 'MARRIAGE' | 'PACS' | 'PARTNERSHIP' | 'OTHER';
+    },
+    token: string,
+  ) =>
+    apiFetch<any>('/persons/integrity/connect', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      token,
+    }),
+
+  deleteDisconnectedComponent: (personId: string, token: string) =>
+    apiFetch<any>(`/persons/integrity/component/${personId}?confirm=DELETE_COMPONENT`, {
       method: 'DELETE',
       token,
     }),
@@ -132,20 +193,49 @@ export const unionApi = {
 
 // ─── Auth API ────────────────────────────────
 export const authApi = {
-  login: (email: string, password: string) =>
+  login: (identifier: string, password: string) =>
     apiFetch<any>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
-    }),
-
-  register: (email: string, password: string, displayName?: string) =>
-    apiFetch<any>('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ email, password, displayName }),
+      body: JSON.stringify({ identifier, password }),
     }),
 
   getProfile: (token: string) =>
     apiFetch<any>('/auth/me', { token }),
+
+  listUsers: (token: string) =>
+    apiFetch<any>('/auth/users', { token }),
+
+  createUser: (
+    data: {
+      identifier: string;
+      password: string;
+      displayName?: string;
+      role?: 'ADMIN' | 'VISITOR';
+    },
+    token: string,
+  ) =>
+    apiFetch<any>('/auth/users', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      token,
+    }),
+
+  updateUserRole: (id: string, role: 'ADMIN' | 'VISITOR', token: string) =>
+    apiFetch<any>(`/auth/users/${id}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+      token,
+    }),
+
+  getLdapConfig: (token: string) =>
+    apiFetch<any>('/auth/ldap/config', { token }),
+
+  updateLdapConfig: (data: any, token: string) =>
+    apiFetch<any>('/auth/ldap/config', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      token,
+    }),
 };
 
 // ─── GEDCOM API ──────────────────────────────
@@ -175,6 +265,28 @@ export const gedcomApi = {
     if (maxGenerations) params.set('maxGenerations', String(maxGenerations));
     const qs = params.toString();
     return qs ? `${url}?${qs}` : url;
+  },
+
+  exportFile: async (token: string, rootPersonId?: string, maxGenerations?: number) => {
+    const response = await fetch(
+      gedcomApi.exportUrl(rootPersonId, maxGenerations),
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Export failed' }));
+      throw new Error(error.message || `HTTP ${response.status}`);
+    }
+
+    const contentDisposition = response.headers.get('content-disposition') || '';
+    const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+    const filename = filenameMatch?.[1] || 'origineo_export.ged';
+    const blob = await response.blob();
+
+    return { blob, filename };
   },
 
   mergeAnalyze: async (file: File, token: string) => {

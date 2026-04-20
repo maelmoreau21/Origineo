@@ -109,28 +109,31 @@ describe('RolesGuard', () => {
 
 describe('Route Security Matrix', () => {
   // This documents the expected security configuration for all routes.
-  // The actual enforcement is done by guards + decorators.
-  // This test verifies the logical matrix.
+  // The actual enforcement is done by global guards + decorators + service checks.
+  // Root-only routes still require ADMIN at guard level, then root is enforced in service.
 
   const routes = [
     // Public routes (no auth required)
-    { path: 'GET /api/persons', auth: 'public' },
-    { path: 'GET /api/persons/root', auth: 'public' },
-    { path: 'GET /api/persons/:id', auth: 'public' },
-    { path: 'GET /api/tree/:id', auth: 'public' },
-    { path: 'GET /api/tree/relationship/:a/:b', auth: 'public' },
-    { path: 'GET /api/search', auth: 'public' },
-    { path: 'GET /api/gedcom/export', auth: 'public' },
-    { path: 'GET /api/documents/person/:id', auth: 'public' },
-    { path: 'GET /api/documents/union/:id', auth: 'public' },
-    { path: 'GET /api/documents/:id', auth: 'public' },
-    { path: 'GET /api/documents/:id/download', auth: 'public' },
-    { path: 'GET /api/documents/:id/view', auth: 'public' },
     { path: 'POST /api/auth/login', auth: 'public' },
-    { path: 'POST /api/auth/register', auth: 'public' },
 
-    // JWT only routes
+    // JWT routes (authenticated users)
     { path: 'GET /api/auth/me', auth: 'jwt' },
+    { path: 'GET /api/persons', auth: 'jwt' },
+    { path: 'GET /api/persons/root', auth: 'jwt' },
+    { path: 'GET /api/persons/:id', auth: 'jwt' },
+    { path: 'GET /api/relationships/person/:id', auth: 'jwt' },
+    { path: 'GET /api/unions', auth: 'jwt' },
+    { path: 'GET /api/unions/person/:id', auth: 'jwt' },
+    { path: 'GET /api/unions/:id', auth: 'jwt' },
+    { path: 'GET /api/tree/:id', auth: 'jwt' },
+    { path: 'GET /api/tree/relationship/:a/:b', auth: 'jwt' },
+    { path: 'GET /api/search', auth: 'jwt' },
+    { path: 'GET /api/gedcom/export', auth: 'jwt' },
+    { path: 'GET /api/documents/person/:id', auth: 'jwt' },
+    { path: 'GET /api/documents/union/:id', auth: 'jwt' },
+    { path: 'GET /api/documents/:id', auth: 'jwt' },
+    { path: 'GET /api/documents/:id/download', auth: 'jwt' },
+    { path: 'GET /api/documents/:id/view', auth: 'jwt' },
 
     // Admin routes
     { path: 'POST /api/persons', auth: 'admin' },
@@ -146,16 +149,41 @@ describe('Route Security Matrix', () => {
     { path: 'POST /api/gedcom/merge/apply', auth: 'admin' },
     { path: 'POST /api/documents/upload', auth: 'admin' },
     { path: 'DELETE /api/documents/:id', auth: 'admin' },
+
+    // Root-managed routes (admin at guard level, root in service)
+    { path: 'POST /api/auth/users', auth: 'root' },
+    { path: 'GET /api/auth/users', auth: 'root' },
+    { path: 'PATCH /api/auth/users/:id/role', auth: 'root' },
+    { path: 'GET /api/auth/ldap/config', auth: 'root' },
+    { path: 'POST /api/auth/ldap/config', auth: 'root' },
   ];
 
   it('should have correct number of public routes', () => {
     const publicRoutes = routes.filter((r) => r.auth === 'public');
-    expect(publicRoutes.length).toBe(14);
+    expect(publicRoutes.length).toBe(1);
+  });
+
+  it('should have correct number of authenticated JWT routes', () => {
+    const jwtRoutes = routes.filter((r) => r.auth === 'jwt');
+    expect(jwtRoutes.length).toBe(17);
   });
 
   it('should have correct number of admin routes', () => {
     const adminRoutes = routes.filter((r) => r.auth === 'admin');
     expect(adminRoutes.length).toBe(13);
+  });
+
+  it('should have correct number of root-managed routes', () => {
+    const rootRoutes = routes.filter((r) => r.auth === 'root');
+    expect(rootRoutes.length).toBe(5);
+  });
+
+  it('all routes except login should require authentication', () => {
+    const nonLoginRoutes = routes.filter((r) => r.path !== 'POST /api/auth/login');
+
+    for (const route of nonLoginRoutes) {
+      expect(route.auth, `${route.path} should not be public`).not.toBe('public');
+    }
   });
 
   it('all write operations (POST/PATCH/DELETE) on domain entities should require admin', () => {
@@ -173,16 +201,16 @@ describe('Route Security Matrix', () => {
     }
   });
 
-  it('all GET routes on domain entities should be public', () => {
+  it('all GET routes on domain entities should require JWT', () => {
     const getRoutes = routes.filter(
-      (r) => r.path.startsWith('GET') && !r.path.includes('/auth/me'),
+      (r) => r.path.startsWith('GET') && !r.path.includes('/auth/'),
     );
 
     for (const route of getRoutes) {
       expect(
         route.auth,
-        `${route.path} should be public`,
-      ).toBe('public');
+        `${route.path} should require JWT`,
+      ).toBe('jwt');
     }
   });
 });

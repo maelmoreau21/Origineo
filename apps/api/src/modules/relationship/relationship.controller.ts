@@ -18,7 +18,6 @@ import { CreateRelationshipDto } from './dto/relationship.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('Relationships')
 @Controller('relationships')
@@ -37,7 +36,6 @@ export class RelationshipController {
     };
   }
 
-  @Public()
   @Get('person/:personId')
   @ApiOperation({ summary: 'Get all relationships for a person' })
   async findByPerson(@Param('personId', ParseUUIDPipe) personId: string) {

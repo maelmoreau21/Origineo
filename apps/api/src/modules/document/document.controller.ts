@@ -29,7 +29,6 @@ import { DocumentService } from './document.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('Documents')
 @Controller('documents')
@@ -74,7 +73,6 @@ export class DocumentController {
     };
   }
 
-  @Public()
   @Get('person/:personId')
   @ApiOperation({ summary: 'List all documents for a person' })
   async findByPerson(@Param('personId', ParseUUIDPipe) personId: string) {
@@ -84,7 +82,6 @@ export class DocumentController {
     };
   }
 
-  @Public()
   @Get('union/:unionId')
   @ApiOperation({ summary: 'List all documents for a union' })
   async findByUnion(@Param('unionId', ParseUUIDPipe) unionId: string) {
@@ -94,7 +91,6 @@ export class DocumentController {
     };
   }
 
-  @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Get document metadata' })
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
@@ -104,7 +100,6 @@ export class DocumentController {
     };
   }
 
-  @Public()
   @Get(':id/download')
   @ApiOperation({ summary: 'Download a document file' })
   async download(
@@ -122,7 +117,6 @@ export class DocumentController {
     res.sendFile(absolutePath);
   }
 
-  @Public()
   @Get(':id/view')
   @ApiOperation({ summary: 'View a document inline (images, PDFs)' })
   async view(

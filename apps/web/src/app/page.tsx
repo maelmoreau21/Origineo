@@ -27,6 +27,8 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
+import { toPng } from 'html-to-image';
+import { jsPDF } from 'jspdf';
 import {
   treeApi,
   personApi,
@@ -114,6 +116,37 @@ type HistoryEntry = {
   operations: HistoryOperation[];
 };
 
+type UnionRecord = {
+  id: string;
+  partner1Id: string;
+  partner2Id: string;
+  type?: string;
+  partner1?: TreePerson;
+  partner2?: TreePerson;
+};
+
+type ChildRelationshipRecord = {
+  id: string;
+  parentId: string;
+  childId: string;
+  type?: string;
+  parent?: TreePerson;
+};
+
+type ChildUnionOption = {
+  id: string;
+  partnerId: string;
+  partnerName: string;
+  unionType: string;
+};
+
+type ParentOption = {
+  parentId: string;
+  parentName: string;
+};
+
+type SidePanelTab = 'SUMMARY' | 'EDIT' | 'HISTORY';
+
 function normalizePerson(person: TreePerson) {
   return {
     id: person.id,
@@ -126,11 +159,98 @@ function normalizePerson(person: TreePerson) {
   };
 }
 
+type NormalizedTreePerson = ReturnType<typeof normalizePerson>;
+
+type TreeRelationship = {
+  id: string;
+  parentId: string;
+  childId: string;
+  type?: string;
+};
+
+type TreeUnion = {
+  id: string;
+  partner1Id: string;
+  partner2Id: string;
+  type?: string;
+};
+
+type FamilySummary = {
+  unionId: string;
+  partnerId: string;
+  partnerName: string;
+  children: Array<{ id: string; name: string }>;
+};
+
+function buildPairKey(idA: string, idB: string) {
+  return idA < idB ? `${idA}|${idB}` : `${idB}|${idA}`;
+}
+
+function colorFromSeed(seed: string) {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 76%, 56%)`;
+}
+
+function toCsvCell(value: unknown) {
+  const text = value == null ? '' : String(value);
+  const escaped = text.replace(/"/g, '""');
+  return `"${escaped}"`;
+}
+
+function downloadFile(fileName: string, mimeType: string, content: string | Blob) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+function buildExportDateSuffix() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}_${hh}${min}`;
+}
+
 function personDisplayName(person: TreePerson | null | undefined) {
   if (!person) return '';
   const p = normalizePerson(person);
   const surname = p.usageSurname || p.birthSurname || '';
   return `${p.givenNames}${surname ? ` ${surname}` : ''}`.trim();
+}
+
+function shortId(value: string) {
+  return value.slice(0, 8);
+}
+
+function unionTypeLabel(type: string | undefined) {
+  if (type === 'MARRIAGE') return 'Mariage';
+  if (type === 'PACS') return 'PACS';
+  if (type === 'PARTNERSHIP') return 'Partenariat';
+  return 'Union';
+}
+
+function buildStandalonePersonForm(isRootDefault = false) {
+  return {
+    givenNames: '',
+    usageSurname: '',
+    birthSurname: '',
+    gender: 'UNKNOWN',
+    birthDate: '',
+    birthPlace: '',
+    isRootDefault,
+  };
 }
 
 // ─── Inner Flow (needs ReactFlowProvider) ───
@@ -153,13 +273,29 @@ function TreeFlow() {
   const [linkTarget, setLinkTarget] = useState<LinkTarget>('new');
   const [relationshipType, setRelationshipType] = useState('BIOLOGICAL');
   const [unionType, setUnionType] = useState('MARRIAGE');
+  const [wideTreeMode, setWideTreeMode] = useState(true);
+  const [menusCompact, setMenusCompact] = useState(true);
+  const [presentationMode, setPresentationMode] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>('SUMMARY');
+  const [preferencesKey, setPreferencesKey] = useState('origineo_tree_prefs_guest');
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
-  const [focusModeEnabled, setFocusModeEnabled] = useState(true);
+  const [focusModeEnabled, setFocusModeEnabled] = useState(false);
   const [dragLinkType, setDragLinkType] = useState<DragLinkType>('PARENT_CHILD');
-  const [assistantCreateMissingParent, setAssistantCreateMissingParent] = useState(true);
-  const [loadedUnions, setLoadedUnions] = useState<any[]>([]);
+  const [assistantCreateMissingParent, setAssistantCreateMissingParent] = useState(false);
+  const [selectedPersonUnions, setSelectedPersonUnions] = useState<UnionRecord[]>([]);
+  const [selectedPersonParents, setSelectedPersonParents] = useState<ChildRelationshipRecord[]>([]);
+  const [familyContextLoading, setFamilyContextLoading] = useState(false);
+  const [familyContextError, setFamilyContextError] = useState<string | null>(null);
+  const [selectedChildUnionId, setSelectedChildUnionId] = useState('');
+  const [parentUnionLinkParentId, setParentUnionLinkParentId] = useState('NONE');
+  const [treeRelationships, setTreeRelationships] = useState<TreeRelationship[]>([]);
+  const [treeUnions, setTreeUnions] = useState<TreeUnion[]>([]);
+  const [treePersonById, setTreePersonById] = useState<Record<string, NormalizedTreePerson>>({});
+  const [exportBusy, setExportBusy] = useState<null | 'PNG' | 'PDF' | 'CSV_VISIBLE' | 'CSV_BRANCH'>(null);
   const [historyState, setHistoryState] = useState<{ entries: HistoryEntry[]; index: number }>({
     entries: [],
     index: -1,
@@ -172,6 +308,9 @@ function TreeFlow() {
     birthDate: '',
     birthPlace: '',
   });
+  const [showStandaloneCreate, setShowStandaloneCreate] = useState(false);
+  const [standaloneCreateBusy, setStandaloneCreateBusy] = useState(false);
+  const [standalonePersonForm, setStandalonePersonForm] = useState(() => buildStandalonePersonForm(true));
   const [focusQuery, setFocusQuery] = useState('');
   const [focusResults, setFocusResults] = useState<any[]>([]);
   const [focusLoading, setFocusLoading] = useState(false);
@@ -179,8 +318,13 @@ function TreeFlow() {
   const [existingQuery, setExistingQuery] = useState('');
   const [existingResults, setExistingResults] = useState<any[]>([]);
   const [existingLoading, setExistingLoading] = useState(false);
-  const { fitView } = useReactFlow();
+  const { fitView, getViewport, setViewport } = useReactFlow();
   const abortRef = useRef<AbortController | null>(null);
+  const treeCanvasRef = useRef<HTMLDivElement | null>(null);
+  const controlsBarRef = useRef<HTMLDivElement | null>(null);
+  const controlsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastWorkspaceMoveRef = useRef(0);
+  const [controlsBarHeight, setControlsBarHeight] = useState(0);
 
   const selectedPerson = useMemo(() => {
     if (!selectedPersonId) return null;
@@ -193,8 +337,145 @@ function TreeFlow() {
     () => (selectedPerson ? normalizePerson(selectedPerson) : null),
     [selectedPerson],
   );
+  const showSelectionPanel = Boolean(selectedPerson) && !wideTreeMode && !presentationMode;
+
+  const childUnionOptions = useMemo<ChildUnionOption[]>(() => {
+    if (!selectedPersonId) return [];
+
+    return selectedPersonUnions.map((union) => {
+      const partnerId = union.partner1Id === selectedPersonId
+        ? union.partner2Id
+        : union.partner1Id;
+      const partner = union.partner1Id === selectedPersonId
+        ? union.partner2
+        : union.partner1;
+
+      return {
+        id: union.id,
+        partnerId,
+        partnerName: personDisplayName(partner) || `Personne ${shortId(partnerId)}`,
+        unionType: union.type || 'OTHER',
+      };
+    });
+  }, [selectedPersonId, selectedPersonUnions]);
+
+  const selectedChildUnion = useMemo(() => {
+    if (!selectedChildUnionId) return null;
+    return childUnionOptions.find((union) => union.id === selectedChildUnionId) || null;
+  }, [childUnionOptions, selectedChildUnionId]);
+
+  const visibleUnionOptions = useMemo<ChildUnionOption[]>(() => {
+    if (!selectedPersonId) return [];
+
+    return treeUnions
+      .filter((union) => union.partner1Id === selectedPersonId || union.partner2Id === selectedPersonId)
+      .map((union) => {
+        const partnerId = union.partner1Id === selectedPersonId ? union.partner2Id : union.partner1Id;
+        const partner = treePersonById[partnerId];
+
+        return {
+          id: union.id,
+          partnerId,
+          partnerName: personDisplayName(partner) || `Personne ${shortId(partnerId)}`,
+          unionType: union.type || 'OTHER',
+        };
+      });
+  }, [selectedPersonId, treeUnions, treePersonById]);
+
+  const familySummary = useMemo(() => {
+    if (!selectedPersonId) {
+      return {
+        families: [] as FamilySummary[],
+        childrenWithoutUnion: [] as Array<{ id: string; name: string }>,
+      };
+    }
+
+    const childrenByParent = new Map<string, Set<string>>();
+    for (const relationship of treeRelationships) {
+      const children = childrenByParent.get(relationship.parentId) || new Set<string>();
+      children.add(relationship.childId);
+      childrenByParent.set(relationship.parentId, children);
+    }
+
+    const selectedChildren = childrenByParent.get(selectedPersonId) || new Set<string>();
+    const seenChildren = new Set<string>();
+
+    const families: FamilySummary[] = visibleUnionOptions.map((unionOption) => {
+      const partnerChildren = childrenByParent.get(unionOption.partnerId) || new Set<string>();
+      const sharedChildren = Array.from(selectedChildren)
+        .filter((childId) => partnerChildren.has(childId))
+        .map((childId) => {
+          seenChildren.add(childId);
+          const child = treePersonById[childId];
+          return {
+            id: childId,
+            name: personDisplayName(child) || `Personne ${shortId(childId)}`,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+
+      return {
+        unionId: unionOption.id,
+        partnerId: unionOption.partnerId,
+        partnerName: unionOption.partnerName,
+        children: sharedChildren,
+      };
+    });
+
+    const childrenWithoutUnion = Array.from(selectedChildren)
+      .filter((childId) => !seenChildren.has(childId))
+      .map((childId) => {
+        const child = treePersonById[childId];
+        return {
+          id: childId,
+          name: personDisplayName(child) || `Personne ${shortId(childId)}`,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+
+    return {
+      families,
+      childrenWithoutUnion,
+    };
+  }, [selectedPersonId, treeRelationships, treePersonById, visibleUnionOptions]);
+
+  const parentOptionsForUnion = useMemo<ParentOption[]>(() => {
+    const uniqueParents = new Map<string, ParentOption>();
+
+    selectedPersonParents.forEach((relationship) => {
+      if (uniqueParents.has(relationship.parentId)) return;
+
+      uniqueParents.set(relationship.parentId, {
+        parentId: relationship.parentId,
+        parentName:
+          personDisplayName(relationship.parent) ||
+          `Parent ${shortId(relationship.parentId)}`,
+      });
+    });
+
+    return Array.from(uniqueParents.values());
+  }, [selectedPersonParents]);
+
   const canUndo = historyState.index >= 0;
   const canRedo = historyState.index < historyState.entries.length - 1;
+
+  const clearControlsHideTimer = useCallback(() => {
+    if (!controlsHideTimerRef.current) return;
+    clearTimeout(controlsHideTimerRef.current);
+    controlsHideTimerRef.current = null;
+  }, []);
+
+  const scheduleControlsHide = useCallback(() => {
+    clearControlsHideTimer();
+    if (presentationMode) {
+      setControlsVisible(false);
+      return;
+    }
+
+    controlsHideTimerRef.current = setTimeout(() => {
+      setControlsVisible(false);
+    }, menusCompact ? 3500 : 4500);
+  }, [clearControlsHideTimer, menusCompact, presentationMode]);
 
   const makeOperationId = useCallback((prefix: string) => {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -326,6 +607,22 @@ function TreeFlow() {
     });
   }, []);
 
+  const resetStandalonePersonForm = useCallback((asRootDefault: boolean) => {
+    setStandalonePersonForm(buildStandalonePersonForm(asRootDefault));
+  }, []);
+
+  const openStandaloneCreate = useCallback(() => {
+    clearActionState();
+    resetStandalonePersonForm(!rootPersonId);
+    setShowStandaloneCreate(true);
+  }, [clearActionState, resetStandalonePersonForm, rootPersonId]);
+
+  const closeStandaloneCreate = useCallback(() => {
+    setShowStandaloneCreate(false);
+    setStandaloneCreateBusy(false);
+    resetStandalonePersonForm(!rootPersonId);
+  }, [resetStandalonePersonForm, rootPersonId]);
+
   const buildLinkOperation = useCallback((
     opId: string,
     targetPersonRef: string,
@@ -367,15 +664,6 @@ function TreeFlow() {
     };
   }, [selectedPersonId, linkMode, relationshipType, unionType]);
 
-  const existingPartnerId = useMemo(() => {
-    if (!selectedPersonId) return null;
-    const union = loadedUnions.find(
-      (u) => u.partner1Id === selectedPersonId || u.partner2Id === selectedPersonId,
-    );
-    if (!union) return null;
-    return union.partner1Id === selectedPersonId ? union.partner2Id : union.partner1Id;
-  }, [loadedUnions, selectedPersonId]);
-
   const selectedPersonLabel = linkMode === 'PARENT'
     ? 'Ajouter un parent'
     : linkMode === 'CHILD'
@@ -388,8 +676,104 @@ function TreeFlow() {
       ? 'Enfant ajouté'
       : 'Conjoint ajouté';
 
+  const buildChildCoParentOperations = useCallback((
+    childRef: string,
+  ): { operations: HistoryOperation[]; actionSuffix: string } => {
+    if (!selectedPersonId || linkMode !== 'CHILD') {
+      return { operations: [], actionSuffix: '' };
+    }
+
+    if (selectedChildUnion) {
+      return {
+        operations: [
+          {
+            opId: makeOperationId('co-parent-link'),
+            kind: 'relationship',
+            payload: {
+              parentId: selectedChildUnion.partnerId,
+              childId: childRef,
+              type: relationshipType,
+            },
+          },
+        ],
+        actionSuffix: ` + co-parent (${selectedChildUnion.partnerName})`,
+      };
+    }
+
+    if (!assistantCreateMissingParent) {
+      return { operations: [], actionSuffix: '' };
+    }
+
+    const coParentOpId = makeOperationId('assistant-co-parent');
+    const surname =
+      selectedPersonNormalized?.birthSurname ||
+      selectedPersonNormalized?.usageSurname ||
+      undefined;
+
+    return {
+      operations: [
+        {
+          opId: coParentOpId,
+          kind: 'person',
+          payload: {
+            givenNames: 'Co-parent a completer',
+            usageSurname: surname,
+            birthSurname: surname,
+            gender: 'UNKNOWN',
+          },
+        },
+        {
+          opId: makeOperationId('assistant-union'),
+          kind: 'union',
+          payload: {
+            partner1Id: selectedPersonId,
+            partner2Id: `@${coParentOpId}`,
+            type: unionType,
+          },
+        },
+        {
+          opId: makeOperationId('assistant-co-parent-link'),
+          kind: 'relationship',
+          payload: {
+            parentId: `@${coParentOpId}`,
+            childId: childRef,
+            type: relationshipType,
+          },
+        },
+      ],
+      actionSuffix: ' + co-parent provisoire',
+    };
+  }, [
+    selectedPersonId,
+    linkMode,
+    selectedChildUnion,
+    assistantCreateMissingParent,
+    makeOperationId,
+    relationshipType,
+    selectedPersonNormalized,
+    unionType,
+  ]);
+
+  const buildParentUnionOperation = useCallback((
+    parentRef: string,
+  ): HistoryOperation | null => {
+    if (linkMode !== 'PARENT') return null;
+    if (!selectedPersonId || parentUnionLinkParentId === 'NONE') return null;
+    if (parentRef === parentUnionLinkParentId) return null;
+
+    return {
+      opId: makeOperationId('parent-union-link'),
+      kind: 'union',
+      payload: {
+        partner1Id: parentRef,
+        partner2Id: parentUnionLinkParentId,
+        type: unionType,
+      },
+    };
+  }, [linkMode, selectedPersonId, parentUnionLinkParentId, makeOperationId, unionType]);
+
   const applyQuickTemplate = useCallback(
-    (template: 'MOTHER' | 'FATHER' | 'CHILD' | 'SPOUSE') => {
+    (template: 'MOTHER' | 'FATHER' | 'PARENT' | 'CHILD' | 'SPOUSE') => {
       clearActionState();
       setLinkTarget('new');
 
@@ -420,6 +804,20 @@ function TreeFlow() {
           usageSurname: defaultSurname,
           birthSurname: defaultSurname,
           gender: 'MALE',
+          birthDate: '',
+          birthPlace: selectedPersonNormalized?.birthPlace || '',
+        });
+        return;
+      }
+
+      if (template === 'PARENT') {
+        setLinkMode('PARENT');
+        setRelationshipType('BIOLOGICAL');
+        setNewPersonForm({
+          givenNames: '',
+          usageSurname: defaultSurname,
+          birthSurname: defaultSurname,
+          gender: 'UNKNOWN',
           birthDate: '',
           birthPlace: selectedPersonNormalized?.birthPlace || '',
         });
@@ -472,7 +870,7 @@ function TreeFlow() {
             setSelectedPersonId(fallbackPerson.id);
             setWarning('Aucune racine par défaut: affichage centré sur la première personne disponible.');
           } else {
-            setError('Aucune personne disponible. Créez une personne dans Admin pour initialiser l\'arbre.');
+            setError('Aucune personne disponible. Créez la première personne directement depuis cette page.');
             setLoading(false);
           }
         }
@@ -488,6 +886,7 @@ function TreeFlow() {
   useEffect(() => {
     const savedToken = localStorage.getItem('origineo_token');
     if (!savedToken) {
+      setPreferencesKey('origineo_tree_prefs_guest');
       setAuthChecked(true);
       return;
     }
@@ -496,16 +895,66 @@ function TreeFlow() {
     authApi.getProfile(savedToken)
       .then((result) => {
         setIsAdmin(result.data?.role === 'ADMIN');
+        const profileIdentifier = String(
+          result.data?.email || result.data?.id || result.data?.sub || 'guest',
+        )
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]/g, '_');
+        setPreferencesKey(`origineo_tree_prefs_${profileIdentifier}`);
       })
       .catch(() => {
         localStorage.removeItem('origineo_token');
         setToken(null);
         setIsAdmin(false);
+        setPreferencesKey('origineo_tree_prefs_guest');
       })
       .finally(() => {
         setAuthChecked(true);
       });
   }, []);
+
+  useEffect(() => {
+    setPreferencesReady(false);
+    try {
+      const raw = localStorage.getItem(preferencesKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.wideTreeMode === 'boolean') setWideTreeMode(parsed.wideTreeMode);
+        if (typeof parsed.menusCompact === 'boolean') setMenusCompact(parsed.menusCompact);
+        if (typeof parsed.ancestorGens === 'number' && parsed.ancestorGens >= 0 && parsed.ancestorGens <= 8) {
+          setAncestorGens(parsed.ancestorGens);
+        }
+        if (typeof parsed.descendantGens === 'number' && parsed.descendantGens >= 0 && parsed.descendantGens <= 6) {
+          setDescendantGens(parsed.descendantGens);
+        }
+      }
+    } catch {
+      // Ignore invalid persisted preferences.
+    } finally {
+      setPreferencesReady(true);
+    }
+  }, [preferencesKey]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+
+    const payload = {
+      wideTreeMode,
+      menusCompact,
+      ancestorGens,
+      descendantGens,
+    };
+
+    localStorage.setItem(preferencesKey, JSON.stringify(payload));
+  }, [
+    preferencesReady,
+    preferencesKey,
+    wideTreeMode,
+    menusCompact,
+    ancestorGens,
+    descendantGens,
+  ]);
 
   // Keep selected node valid after reload/root changes
   useEffect(() => {
@@ -515,6 +964,122 @@ function TreeFlow() {
       setSelectedPersonId(rootPersonId);
     }
   }, [nodes, selectedPersonId, rootPersonId]);
+
+  // Load complete family context for selected person (all unions + known parents)
+  useEffect(() => {
+    if (!selectedPersonId || !isAdmin) {
+      setSelectedPersonUnions([]);
+      setSelectedPersonParents([]);
+      setFamilyContextError(null);
+      setFamilyContextLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setFamilyContextLoading(true);
+    setFamilyContextError(null);
+
+    Promise.all([
+      unionApi.getByPerson(selectedPersonId),
+      relationshipApi.getByPerson(selectedPersonId),
+    ])
+      .then(([unionResult, relationshipResult]) => {
+        if (cancelled) return;
+
+        const unions = Array.isArray(unionResult.data)
+          ? (unionResult.data as UnionRecord[])
+          : [];
+        const asChild = relationshipResult.data?.asChild;
+        const parentLinks = Array.isArray(asChild)
+          ? (asChild as ChildRelationshipRecord[])
+          : [];
+
+        setSelectedPersonUnions(unions);
+        setSelectedPersonParents(parentLinks);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSelectedPersonUnions([]);
+        setSelectedPersonParents([]);
+        setFamilyContextError('Impossible de charger le contexte familial de cette personne.');
+      })
+      .finally(() => {
+        if (!cancelled) setFamilyContextLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPersonId, isAdmin]);
+
+  useEffect(() => {
+    if (childUnionOptions.length === 0) {
+      setSelectedChildUnionId('');
+      return;
+    }
+
+    setSelectedChildUnionId((current) => (
+      current && childUnionOptions.some((option) => option.id === current)
+        ? current
+        : childUnionOptions[0].id
+    ));
+  }, [childUnionOptions]);
+
+  useEffect(() => {
+    setParentUnionLinkParentId((current) => (
+      current !== 'NONE' && !parentOptionsForUnion.some((option) => option.parentId === current)
+        ? 'NONE'
+        : current
+    ));
+  }, [parentOptionsForUnion]);
+
+  useEffect(() => {
+    if (presentationMode) {
+      clearControlsHideTimer();
+      setControlsVisible(false);
+      return;
+    }
+
+    setControlsVisible(true);
+    scheduleControlsHide();
+  }, [clearControlsHideTimer, menusCompact, presentationMode, scheduleControlsHide]);
+
+  useEffect(() => {
+    return () => {
+      clearControlsHideTimer();
+    };
+  }, [clearControlsHideTimer]);
+
+  useEffect(() => {
+    const controlsBar = controlsBarRef.current;
+
+    if (!controlsBar || presentationMode || !controlsVisible) {
+      setControlsBarHeight(0);
+      return;
+    }
+
+    const updateHeight = () => {
+      const nextHeight = Math.ceil(controlsBar.getBoundingClientRect().height);
+      setControlsBarHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+    };
+
+    updateHeight();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      updateHeight();
+    });
+    observer.observe(controlsBar);
+    window.addEventListener('resize', updateHeight);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateHeight);
+    };
+  }, [controlsVisible, presentationMode]);
 
   // Search suggestions for root focus (server-side, scalable)
   useEffect(() => {
@@ -572,12 +1137,8 @@ function TreeFlow() {
   const loadTree = useCallback(async () => {
     if (!rootPersonId) return;
 
-    const requestedAncestors = focusModeEnabled
-      ? Math.min(ancestorGens, 2)
-      : ancestorGens;
-    const requestedDescendants = focusModeEnabled
-      ? Math.min(descendantGens, 2)
-      : descendantGens;
+    const requestedAncestors = ancestorGens;
+    const requestedDescendants = descendantGens;
 
     // Abort previous request if still pending
     if (abortRef.current) abortRef.current.abort();
@@ -597,7 +1158,6 @@ function TreeFlow() {
         requestedDescendants,
       );
       const treeData = result.data;
-      setLoadedUnions(treeData.unions || []);
 
       // Convert to React Flow nodes
       const flowNodes: Node[] = treeData.nodes.map((node: any) => ({
@@ -611,43 +1171,122 @@ function TreeFlow() {
         position: { x: 0, y: 0 },
       }));
 
+      const normalizedPersonMap: Record<string, NormalizedTreePerson> = {};
+      treeData.nodes.forEach((node: any) => {
+        normalizedPersonMap[node.person.id] = normalizePerson(node.person);
+      });
+      setTreePersonById(normalizedPersonMap);
+
+      const relationships: TreeRelationship[] = treeData.relationships || [];
+      const unions: TreeUnion[] = treeData.unions || [];
+      setTreeRelationships(relationships);
+      setTreeUnions(unions);
+
+      const parentsByChild = new Map<string, string[]>();
+      relationships.forEach((rel) => {
+        const list = parentsByChild.get(rel.childId) || [];
+        list.push(rel.parentId);
+        parentsByChild.set(rel.childId, list);
+      });
+
+      const unionByPair = new Map<string, TreeUnion>();
+      unions.forEach((union) => {
+        unionByPair.set(buildPairKey(union.partner1Id, union.partner2Id), union);
+      });
+
+      const shouldShowCoparentLabels = flowNodes.length <= 80;
+
       // Parent-child edges
-      const relationshipEdges: Edge[] = treeData.relationships.map((rel: any) => ({
-        id: rel.id,
-        source: rel.parentId,
-        target: rel.childId,
-        type: 'smoothstep',
-        animated: false,
-        style: {
-          stroke: 'var(--color-border)',
-          strokeWidth: 2,
-        },
-        markerEnd: {
-          type: 'arrowclosed' as any,
-          color: 'var(--color-border)',
-          width: 16,
-          height: 16,
-        },
-      }));
+      const relationshipEdges: Edge[] = relationships.map((rel) => {
+        const allParents = parentsByChild.get(rel.childId) || [];
+        const coParentId = allParents.find((parentId) => parentId !== rel.parentId);
+
+        let edgeColor = 'var(--color-border)';
+        if (coParentId) {
+          const pairKey = buildPairKey(rel.parentId, coParentId);
+          const knownUnion = unionByPair.get(pairKey);
+          if (knownUnion) {
+            edgeColor = colorFromSeed(pairKey);
+          }
+        }
+
+        const coParentName = coParentId
+          ? personDisplayName(normalizedPersonMap[coParentId])
+          : '';
+        const edgeLabel = shouldShowCoparentLabels && coParentName
+          ? `avec ${coParentName.length > 22 ? `${coParentName.slice(0, 22)}…` : coParentName}`
+          : undefined;
+
+        return {
+          id: rel.id,
+          source: rel.parentId,
+          target: rel.childId,
+          type: 'smoothstep',
+          animated: false,
+          style: {
+            stroke: edgeColor,
+            strokeWidth: coParentId ? 2.8 : 2,
+            opacity: coParentId ? 0.95 : 0.82,
+          },
+          label: edgeLabel,
+          labelStyle: {
+            fontSize: 10,
+            fontWeight: 600,
+            fill: 'var(--color-text-secondary)',
+          },
+          labelBgStyle: {
+            fill: 'hsla(225, 24%, 12%, 0.82)',
+            stroke: 'var(--color-border-subtle)',
+            strokeWidth: 1,
+          },
+          labelBgPadding: [4, 2],
+          labelBgBorderRadius: 6,
+          markerEnd: {
+            type: 'arrowclosed' as any,
+            color: edgeColor,
+            width: 16,
+            height: 16,
+          },
+        };
+      });
 
       // Partner edges (visual only, not used in dagre layout to keep generations stable)
-      const unionEdges: Edge[] = (treeData.unions || []).map((u: any) => ({
-        id: `union-${u.id}`,
-        source: u.partner1Id,
-        target: u.partner2Id,
-        type: 'straight',
-        style: {
-          stroke: 'hsla(40, 90%, 55%, 0.7)',
-          strokeWidth: 1.5,
-          strokeDasharray: '6 4',
-        },
-        label: 'union',
-        labelStyle: {
-          fontSize: 10,
-          fill: 'hsl(40, 90%, 60%)',
-          fontFamily: 'var(--font-mono)',
-        },
-      }));
+      const unionEdges: Edge[] = unions.map((union) => {
+        const pairColor = colorFromSeed(buildPairKey(union.partner1Id, union.partner2Id));
+        const pairShadow = pairColor.replace('hsl(', 'hsla(').replace(')', ', 0.30)');
+
+        return {
+          id: `union-${union.id}`,
+          source: union.partner1Id,
+          target: union.partner2Id,
+          type: 'smoothstep',
+          animated: false,
+          style: {
+            stroke: pairColor,
+            strokeWidth: 3,
+            opacity: 0.95,
+            filter: `drop-shadow(0 0 5px ${pairShadow})`,
+          },
+          label: '⚭',
+          labelStyle: {
+            fontSize: 16,
+            fontWeight: 700,
+            fill: pairColor,
+          },
+          labelBgStyle: {
+            fill: 'hsla(225, 24%, 12%, 0.88)',
+            stroke: pairColor,
+            strokeWidth: 1,
+            rx: 10,
+            ry: 10,
+          },
+          labelBgPadding: [4, 2],
+          labelBgBorderRadius: 8,
+          data: {
+            unionType: union.type,
+          },
+        };
+      });
 
       // Apply dagre layout
       const { nodes: layoutedNodes, edges: layoutedEdges } =
@@ -786,11 +1425,347 @@ function TreeFlow() {
   const focusOnSelected = useCallback(() => {
     if (!selectedPersonId) return;
     setRootPersonId(selectedPersonId);
-    if (focusModeEnabled) {
-      setAncestorGens((prev) => Math.min(prev, 2));
-      setDescendantGens((prev) => Math.min(prev, 2));
+  }, [selectedPersonId]);
+
+  const quickZoomIn = useCallback(() => {
+    const viewport = getViewport();
+    const nextZoom = Math.min(2.5, viewport.zoom * 1.45);
+    setViewport({ ...viewport, zoom: nextZoom }, { duration: 140 });
+  }, [getViewport, setViewport]);
+
+  const quickZoomOut = useCallback(() => {
+    const viewport = getViewport();
+    const nextZoom = Math.max(0.05, viewport.zoom * 0.72);
+    setViewport({ ...viewport, zoom: nextZoom }, { duration: 140 });
+  }, [getViewport, setViewport]);
+
+  const zoomToGlobalView = useCallback(() => {
+    fitView({ padding: 0.15, duration: 260 });
+  }, [fitView]);
+
+  const getExportElement = useCallback(() => {
+    return treeCanvasRef.current?.querySelector('.react-flow') as HTMLElement | null;
+  }, []);
+
+  const exportVisibleAsPng = useCallback(async () => {
+    const target = getExportElement();
+    if (!target) {
+      setActionError('Export visuel impossible: zone arbre introuvable.');
+      return;
     }
-  }, [focusModeEnabled, selectedPersonId]);
+
+    clearActionState();
+    setExportBusy('PNG');
+
+    try {
+      const exportDateSuffix = buildExportDateSuffix();
+      const dataUrl = await toPng(target, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: '#0f1420',
+      });
+
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = `origineo_arbre_${exportDateSuffix}.png`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      setActionSuccess('Export PNG généré.');
+    } catch (err: any) {
+      setActionError(err.message || 'Impossible d\'exporter le visuel en PNG.');
+    } finally {
+      setExportBusy(null);
+    }
+  }, [clearActionState, getExportElement]);
+
+  const exportVisibleAsPdf = useCallback(async () => {
+    const target = getExportElement();
+    if (!target) {
+      setActionError('Export PDF impossible: zone arbre introuvable.');
+      return;
+    }
+
+    clearActionState();
+    setExportBusy('PDF');
+
+    try {
+      const exportDateSuffix = buildExportDateSuffix();
+      const dataUrl = await toPng(target, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: '#0f1420',
+      });
+
+      const image = new Image();
+      const imageLoaded = new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error('Image export invalid.'));
+      });
+      image.src = dataUrl;
+      await imageLoaded;
+
+      const orientation = image.width >= image.height ? 'landscape' : 'portrait';
+      const pdf = new jsPDF({ orientation, unit: 'pt', format: 'a4' });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const scale = Math.min(pageWidth / image.width, pageHeight / image.height);
+      const drawWidth = image.width * scale;
+      const drawHeight = image.height * scale;
+      const offsetX = (pageWidth - drawWidth) / 2;
+      const offsetY = (pageHeight - drawHeight) / 2;
+
+      pdf.addImage(dataUrl, 'PNG', offsetX, offsetY, drawWidth, drawHeight);
+      pdf.save(`origineo_arbre_${exportDateSuffix}.pdf`);
+
+      setActionSuccess('Export PDF généré.');
+    } catch (err: any) {
+      setActionError(err.message || 'Impossible d\'exporter le visuel en PDF.');
+    } finally {
+      setExportBusy(null);
+    }
+  }, [clearActionState, getExportElement]);
+
+  const exportVisibleTableCsv = useCallback(() => {
+    if (nodes.length === 0) {
+      setActionError('Aucune donnée visible à exporter.');
+      return;
+    }
+
+    clearActionState();
+    setExportBusy('CSV_VISIBLE');
+
+    try {
+      const exportDateSuffix = buildExportDateSuffix();
+      const headers = [
+        'id',
+        'prenom_nom',
+        'prenoms',
+        'nom_usage',
+        'nom_naissance',
+        'genre',
+        'date_naissance',
+        'lieu_naissance',
+        'generation',
+      ];
+
+      const lines = [headers.map(toCsvCell).join(';')];
+
+      const rows = nodes
+        .map((node) => {
+          const person = normalizePerson((node.data as any).person);
+          const generation = (node.data as any).generation ?? 0;
+          return {
+            id: person.id,
+            fullName: personDisplayName(person),
+            givenNames: person.givenNames,
+            usageSurname: person.usageSurname || '',
+            birthSurname: person.birthSurname || '',
+            gender: person.gender,
+            birthDate: person.birthDate || '',
+            birthPlace: person.birthPlace || '',
+            generation,
+          };
+        })
+        .sort((a, b) => {
+          if (a.generation !== b.generation) return a.generation - b.generation;
+          return a.fullName.localeCompare(b.fullName, 'fr');
+        });
+
+      for (const row of rows) {
+        lines.push([
+          row.id,
+          row.fullName,
+          row.givenNames,
+          row.usageSurname,
+          row.birthSurname,
+          row.gender,
+          row.birthDate,
+          row.birthPlace,
+          row.generation,
+        ].map(toCsvCell).join(';'));
+      }
+
+      const csvContent = `\uFEFF${lines.join('\n')}`;
+      downloadFile(
+        `origineo_tableau_vue_${exportDateSuffix}.csv`,
+        'text/csv;charset=utf-8',
+        csvContent,
+      );
+
+      setActionSuccess('Tableau CSV (Excel) exporté pour la vue actuelle.');
+    } catch (err: any) {
+      setActionError(err.message || 'Impossible d\'exporter le tableau CSV.');
+    } finally {
+      setExportBusy(null);
+    }
+  }, [clearActionState, nodes]);
+
+  const exportSelectedBranchCsv = useCallback(async () => {
+    const branchRootId = selectedPersonId || rootPersonId;
+    if (!branchRootId) {
+      setActionError('Sélectionnez une personne pour exporter une branche.');
+      return;
+    }
+
+    const askAncestors = window.prompt(
+      'Nombre de générations d\'ancêtres à exporter pour cette branche :',
+      String(ancestorGens),
+    );
+    if (askAncestors === null) return;
+
+    const askDescendants = window.prompt(
+      'Nombre de générations de descendants à exporter pour cette branche :',
+      String(descendantGens),
+    );
+    if (askDescendants === null) return;
+
+    const parsedAncestors = Number.parseInt(askAncestors, 10);
+    const parsedDescendants = Number.parseInt(askDescendants, 10);
+
+    if (
+      Number.isNaN(parsedAncestors)
+      || Number.isNaN(parsedDescendants)
+      || parsedAncestors < 0
+      || parsedDescendants < 0
+    ) {
+      setActionError('Valeurs invalides: utilisez des nombres entiers >= 0.');
+      return;
+    }
+
+    clearActionState();
+    setExportBusy('CSV_BRANCH');
+
+    try {
+      const exportDateSuffix = buildExportDateSuffix();
+      const result = await treeApi.getTree(branchRootId, parsedAncestors, parsedDescendants);
+      const branchNodes = result.data?.nodes || [];
+
+      const headers = [
+        'id',
+        'prenom_nom',
+        'prenoms',
+        'nom_usage',
+        'nom_naissance',
+        'genre',
+        'date_naissance',
+        'lieu_naissance',
+        'generation',
+        'parents_count',
+        'children_count',
+      ];
+      const lines = [headers.map(toCsvCell).join(';')];
+
+      const rows = branchNodes
+        .map((item: any) => {
+          const person = normalizePerson(item.person);
+          return {
+            id: person.id,
+            fullName: personDisplayName(person),
+            givenNames: person.givenNames,
+            usageSurname: person.usageSurname || '',
+            birthSurname: person.birthSurname || '',
+            gender: person.gender,
+            birthDate: person.birthDate || '',
+            birthPlace: person.birthPlace || '',
+            generation: item.generation ?? 0,
+            parentsCount: Array.isArray(item.parents) ? item.parents.length : 0,
+            childrenCount: Array.isArray(item.children) ? item.children.length : 0,
+          };
+        })
+        .sort((a: any, b: any) => {
+          if (a.generation !== b.generation) return a.generation - b.generation;
+          return a.fullName.localeCompare(b.fullName, 'fr');
+        });
+
+      for (const row of rows) {
+        lines.push([
+          row.id,
+          row.fullName,
+          row.givenNames,
+          row.usageSurname,
+          row.birthSurname,
+          row.gender,
+          row.birthDate,
+          row.birthPlace,
+          row.generation,
+          row.parentsCount,
+          row.childrenCount,
+        ].map(toCsvCell).join(';'));
+      }
+
+      const csvContent = `\uFEFF${lines.join('\n')}`;
+      downloadFile(
+        `origineo_tableau_branche_${shortId(branchRootId)}_${exportDateSuffix}.csv`,
+        'text/csv;charset=utf-8',
+        csvContent,
+      );
+
+      setActionSuccess('Tableau CSV (Excel) exporté pour la branche sélectionnée.');
+    } catch (err: any) {
+      setActionError(err.message || 'Impossible d\'exporter la branche en CSV.');
+    } finally {
+      setExportBusy(null);
+    }
+  }, [
+    ancestorGens,
+    clearActionState,
+    descendantGens,
+    rootPersonId,
+    selectedPersonId,
+  ]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTyping = Boolean(
+        target && (
+          target.tagName === 'INPUT'
+          || target.tagName === 'TEXTAREA'
+          || target.tagName === 'SELECT'
+          || target.isContentEditable
+        ),
+      );
+
+      if (isTyping) return;
+
+      const key = event.key.toLowerCase();
+
+      if (key === 'f') {
+        event.preventDefault();
+        focusOnSelected();
+      }
+
+      if (key === 'w') {
+        event.preventDefault();
+        setWideTreeMode((value) => !value);
+      }
+
+      if (key === 'm') {
+        event.preventDefault();
+        setMenusCompact((value) => !value);
+      }
+
+      if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        quickZoomIn();
+      }
+
+      if (event.key === '-') {
+        event.preventDefault();
+        quickZoomOut();
+      }
+
+      if (key === 'g') {
+        event.preventDefault();
+        zoomToGlobalView();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [focusOnSelected, quickZoomIn, quickZoomOut, zoomToGlobalView]);
 
   const onConnect = useCallback(async (connection: Connection) => {
     const sourceId = connection.source;
@@ -879,6 +1854,151 @@ function TreeFlow() {
     }
   }, [selectedPersonId, ensureAdminSession, token, clearActionState, loadTree]);
 
+  const refreshAfterStructuralMutation = useCallback(async () => {
+    let nextRootId: string | null = null;
+    let fallbackWarning: string | null = null;
+
+    const rootResult = await personApi.getRoot();
+    if (rootResult.data?.id) {
+      nextRootId = rootResult.data.id;
+    } else {
+      const firstPersonResult = await personApi.getAll(1, 1);
+      const fallbackPerson = firstPersonResult.data?.data?.[0];
+      if (fallbackPerson?.id) {
+        nextRootId = fallbackPerson.id;
+        fallbackWarning = 'Aucune racine par défaut: affichage centré sur la première personne disponible.';
+      }
+    }
+
+    if (!nextRootId) {
+      setRootPersonId(null);
+      setSelectedPersonId(null);
+      setNodes([]);
+      setEdges([]);
+      setNodeCount(0);
+      setWarning(null);
+      setError('Aucune personne disponible. Créez la première personne directement depuis cette page.');
+      return;
+    }
+
+    setError(null);
+    setWarning(fallbackWarning);
+    setSelectedPersonId(nextRootId);
+
+    if (rootPersonId !== nextRootId) {
+      setRootPersonId(nextRootId);
+      return;
+    }
+
+    await loadTree();
+  }, [loadTree, rootPersonId, setEdges, setNodes]);
+
+  const deleteSelectedPerson = useCallback(async () => {
+    if (!selectedPersonId || !ensureAdminSession() || !token) return;
+
+    const label = selectedPersonName || `Personne ${shortId(selectedPersonId)}`;
+    if (!window.confirm(`Supprimer la personne "${label}" ?`)) {
+      return;
+    }
+
+    clearActionState();
+    setActionBusy(true);
+
+    try {
+      await personApi.delete(selectedPersonId, token);
+      await refreshAfterStructuralMutation();
+      setActionSuccess('Personne supprimée avec succès.');
+    } catch (err: any) {
+      setActionError(err.message || 'Impossible de supprimer cette personne.');
+    } finally {
+      setActionBusy(false);
+    }
+  }, [
+    selectedPersonId,
+    ensureAdminSession,
+    token,
+    selectedPersonName,
+    clearActionState,
+    refreshAfterStructuralMutation,
+  ]);
+
+  const deleteSelectedBranch = useCallback(async () => {
+    if (!selectedPersonId || !ensureAdminSession() || !token) return;
+
+    const label = selectedPersonName || `Personne ${shortId(selectedPersonId)}`;
+    if (!window.confirm(`Supprimer la branche de "${label}" (personne + descendants) ?`)) {
+      return;
+    }
+
+    clearActionState();
+    setActionBusy(true);
+
+    try {
+      const result = await personApi.deleteBranch(selectedPersonId, token, true);
+      const stats = result.data || {};
+      await refreshAfterStructuralMutation();
+      setActionSuccess(
+        `Branche supprimée: ${stats.personsDeleted || 0} personnes, ${stats.relationshipsDeleted || 0} relations, ${stats.unionsDeleted || 0} unions.`,
+      );
+    } catch (err: any) {
+      setActionError(err.message || 'Impossible de supprimer cette branche.');
+    } finally {
+      setActionBusy(false);
+    }
+  }, [
+    selectedPersonId,
+    ensureAdminSession,
+    token,
+    selectedPersonName,
+    clearActionState,
+    refreshAfterStructuralMutation,
+  ]);
+
+  const createStandalonePerson = useCallback(async () => {
+    if (!ensureAdminSession() || !token) return;
+
+    const payload = {
+      givenNames: standalonePersonForm.givenNames.trim(),
+      usageSurname: standalonePersonForm.usageSurname.trim() || undefined,
+      birthSurname: standalonePersonForm.birthSurname.trim() || undefined,
+      gender: standalonePersonForm.gender,
+      birthDate: standalonePersonForm.birthDate || undefined,
+      birthPlace: standalonePersonForm.birthPlace.trim() || undefined,
+      isRootDefault: standalonePersonForm.isRootDefault,
+    };
+
+    if (!payload.givenNames) {
+      setActionError('Le champ "Prénoms" est obligatoire.');
+      return;
+    }
+
+    clearActionState();
+    setStandaloneCreateBusy(true);
+    try {
+      const createdResult = await personApi.create(payload, token);
+      const createdPerson = normalizePerson(createdResult.data);
+      setRootPersonId(createdPerson.id);
+      setSelectedPersonId(createdPerson.id);
+      setFocusQuery(personDisplayName(createdPerson));
+      setShowFocusResults(false);
+      setError(null);
+      setWarning(null);
+      setActionSuccess('Personne créée depuis l\'accueil. Vous pouvez maintenant lier sa famille.');
+      setShowStandaloneCreate(false);
+      resetStandalonePersonForm(false);
+    } catch (err: any) {
+      setActionError(err.message || 'Impossible de créer la personne.');
+    } finally {
+      setStandaloneCreateBusy(false);
+    }
+  }, [
+    ensureAdminSession,
+    token,
+    standalonePersonForm,
+    clearActionState,
+    resetStandalonePersonForm,
+  ]);
+
   const createAndAttachNewPerson = useCallback(async () => {
     if (!selectedPersonId) return;
 
@@ -907,62 +2027,19 @@ function TreeFlow() {
 
     let actionLabel = selectedPersonLabel;
 
-    if (linkMode === 'CHILD' && assistantCreateMissingParent) {
-      if (existingPartnerId) {
-        operations.push({
-          opId: makeOperationId('assistant-co-parent-link'),
-          kind: 'relationship',
-          payload: {
-            parentId: existingPartnerId,
-            childId: `@${newPersonOpId}`,
-            type: relationshipType,
-          },
-        });
-        actionLabel = 'Ajouter un enfant (assistant foyer)';
-      } else {
-        const coParentOpId = makeOperationId('assistant-co-parent');
-        const surname =
-          selectedPersonNormalized?.birthSurname ||
-          selectedPersonNormalized?.usageSurname ||
-          undefined;
+    if (linkMode === 'CHILD') {
+      const childPlan = buildChildCoParentOperations(`@${newPersonOpId}`);
+      if (childPlan.operations.length > 0) {
+        operations.push(...childPlan.operations);
+        actionLabel = `${selectedPersonLabel}${childPlan.actionSuffix}`;
+      }
+    }
 
-        operations.push({
-          opId: coParentOpId,
-          kind: 'person',
-          payload: {
-            givenNames: 'Parent a completer',
-            usageSurname: surname,
-            birthSurname: surname,
-            gender:
-              selectedPersonNormalized?.gender === 'MALE'
-                ? 'FEMALE'
-                : selectedPersonNormalized?.gender === 'FEMALE'
-                  ? 'MALE'
-                  : 'UNKNOWN',
-          },
-        });
-
-        operations.push({
-          opId: makeOperationId('assistant-union'),
-          kind: 'union',
-          payload: {
-            partner1Id: selectedPersonId,
-            partner2Id: `@${coParentOpId}`,
-            type: unionType,
-          },
-        });
-
-        operations.push({
-          opId: makeOperationId('assistant-co-parent-link'),
-          kind: 'relationship',
-          payload: {
-            parentId: `@${coParentOpId}`,
-            childId: `@${newPersonOpId}`,
-            type: relationshipType,
-          },
-        });
-
-        actionLabel = 'Ajouter un enfant + creer le foyer';
+    if (linkMode === 'PARENT') {
+      const parentUnionOperation = buildParentUnionOperation(`@${newPersonOpId}`);
+      if (parentUnionOperation) {
+        operations.push(parentUnionOperation);
+        actionLabel = 'Ajouter un parent + union parentale';
       }
     }
 
@@ -980,13 +2057,10 @@ function TreeFlow() {
     toNewPersonPayload,
     makeOperationId,
     buildLinkOperation,
+    buildChildCoParentOperations,
+    buildParentUnionOperation,
     runWithHistory,
     linkMode,
-    assistantCreateMissingParent,
-    existingPartnerId,
-    relationshipType,
-    selectedPersonNormalized,
-    unionType,
     linkVerb,
     selectedPersonLabel,
     resetNewPersonForm,
@@ -996,13 +2070,39 @@ function TreeFlow() {
   const linkExistingPerson = useCallback(async (personId: string) => {
     if (!selectedPersonId) return;
 
+    if (linkMode === 'CHILD' && selectedChildUnion && personId === selectedChildUnion.partnerId) {
+      setActionError(
+        'Cette personne est déjà le co-parent de l\'union sélectionnée. Choisissez un autre enfant.',
+      );
+      return;
+    }
+
     const operation = buildLinkOperation(
       makeOperationId('link-existing'),
       personId,
     );
     if (!operation) return;
 
-    const executed = await runWithHistory(selectedPersonLabel, [operation]);
+    const operations: HistoryOperation[] = [operation];
+    let actionLabel = selectedPersonLabel;
+
+    if (linkMode === 'CHILD') {
+      const childPlan = buildChildCoParentOperations(personId);
+      if (childPlan.operations.length > 0) {
+        operations.push(...childPlan.operations);
+        actionLabel = `${selectedPersonLabel}${childPlan.actionSuffix}`;
+      }
+    }
+
+    if (linkMode === 'PARENT') {
+      const parentUnionOperation = buildParentUnionOperation(personId);
+      if (parentUnionOperation) {
+        operations.push(parentUnionOperation);
+        actionLabel = 'Ajouter un parent + union parentale';
+      }
+    }
+
+    const executed = await runWithHistory(actionLabel, operations);
     if (!executed) return;
 
     setActionSuccess(`${linkVerb} avec succès.`);
@@ -1011,9 +2111,14 @@ function TreeFlow() {
     selectedPersonId,
     buildLinkOperation,
     makeOperationId,
+    buildChildCoParentOperations,
+    buildParentUnionOperation,
     runWithHistory,
+    linkMode,
+    selectedChildUnion,
     selectedPersonLabel,
     linkVerb,
+    setActionError,
   ]);
 
   const changeRootFromSearch = useCallback((person: any) => {
@@ -1029,77 +2134,94 @@ function TreeFlow() {
     setSelectedPersonId(node.id);
   }, []);
 
+  const onWorkspaceMouseMove = useCallback(() => {
+    if (presentationMode) return;
+
+    const now = Date.now();
+    if (now - lastWorkspaceMoveRef.current < 120) return;
+    lastWorkspaceMoveRef.current = now;
+
+    if (!controlsVisible) {
+      setControlsVisible(true);
+    }
+    scheduleControlsHide();
+  }, [controlsVisible, presentationMode, scheduleControlsHide]);
+
+  const onToolbarEnter = useCallback(() => {
+    if (presentationMode) return;
+    setControlsVisible(true);
+    clearControlsHideTimer();
+  }, [clearControlsHideTimer, presentationMode]);
+
+  const onToolbarLeave = useCallback(() => {
+    if (presentationMode) return;
+    scheduleControlsHide();
+  }, [presentationMode, scheduleControlsHide]);
+
+  const overlayTopOffset = !presentationMode && controlsVisible && controlsBarHeight > 0
+    ? `calc(var(--space-3) + ${controlsBarHeight + 8}px)`
+    : 'var(--space-3)';
+
   return (
-    <div style={{ height: '100vh', display: 'grid', gridTemplateColumns: selectedPerson ? '1fr minmax(330px, 360px)' : '1fr' }}>
-      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+    <div
+      style={{
+        height: '100vh',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{ height: '100vh', display: 'flex', flexDirection: 'column', minWidth: 0, position: 'relative' }}
+        onMouseMove={onWorkspaceMouseMove}
+      >
         {/* ─── Controls Bar ──────────────────── */}
-        <div className="tree-controls" id="tree-controls-bar">
+        <div
+          ref={controlsBarRef}
+          className="tree-controls"
+          id="tree-controls-bar"
+          data-compact={menusCompact ? 'true' : 'false'}
+          data-visible={controlsVisible ? 'true' : 'false'}
+          data-presentation={presentationMode ? 'true' : 'false'}
+          onMouseEnter={onToolbarEnter}
+          onMouseLeave={onToolbarLeave}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
             <h1 style={{ fontSize: 'var(--text-lg)', fontWeight: 700 }}>
               🌳 Arbre Généalogique
             </h1>
-            {nodeCount > 0 && (
+            {!presentationMode && nodeCount > 0 && (
               <span className="badge badge-accent" style={{ fontSize: '0.7rem' }}>
                 {nodeCount} personne{nodeCount > 1 ? 's' : ''}
               </span>
             )}
-            {isAdmin && (
+            {!presentationMode && isAdmin && (
               <span className="badge badge-emerald" style={{ fontSize: '0.7rem' }}>
                 Édition active
+              </span>
+            )}
+            {!presentationMode && wideTreeMode && selectedPerson && (
+              <span className="badge badge-amber" style={{ fontSize: '0.7rem' }}>
+                Panneau sélection masqué
               </span>
             )}
           </div>
 
           <div style={{ display: 'flex', gap: 'var(--space-4)', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                Ancêtres:
-              </label>
-              <select
-                className="input"
-                style={{ width: 70, padding: 'var(--space-2)' }}
-                value={ancestorGens}
-                onChange={(e) => setAncestorGens(Number(e.target.value))}
-                id="select-ancestor-generations"
-              >
-                {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+              onClick={() => setMenusCompact((value) => !value)}
+            >
+              {menusCompact ? 'Plus d\'options' : 'Menus discrets'}
+            </button>
 
-            <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                Descendants:
-              </label>
-              <select
-                className="input"
-                style={{ width: 70, padding: 'var(--space-2)' }}
-                value={descendantGens}
-                onChange={(e) => setDescendantGens(Number(e.target.value))}
-                id="select-descendant-generations"
-              >
-                {[0, 1, 2, 3, 4, 5, 6].map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                Navigation:
-              </label>
-              <select
-                className="input"
-                style={{ width: 115, padding: 'var(--space-2)' }}
-                value={focusModeEnabled ? 'FOCUS' : 'EXPANDED'}
-                onChange={(e) => setFocusModeEnabled(e.target.value === 'FOCUS')}
-                id="select-navigation-mode"
-              >
-                <option value="FOCUS">Focus</option>
-                <option value="EXPANDED">Étendu</option>
-              </select>
-            </div>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+              onClick={() => setPresentationMode((value) => !value)}
+            >
+              {presentationMode ? 'Quitter présentation' : 'Présentation'}
+            </button>
 
             {selectedPersonId && (
               <button
@@ -1111,76 +2233,231 @@ function TreeFlow() {
               </button>
             )}
 
-            <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                Glisser-relier:
-              </label>
-              <select
-                className="input"
-                style={{ width: 130, padding: 'var(--space-2)' }}
-                value={dragLinkType}
-                onChange={(e) => setDragLinkType(e.target.value as DragLinkType)}
-                id="select-drag-link-mode"
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-1)' }}>
+              <button
+                className="btn btn-ghost"
+                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                onClick={quickZoomOut}
+                title="Raccourci clavier: -"
               >
-                <option value="PARENT_CHILD">Parenté</option>
-                <option value="UNION">Union</option>
-              </select>
+                Zoom -
+              </button>
+              <button
+                className="btn btn-ghost"
+                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                onClick={quickZoomIn}
+                title="Raccourci clavier: +"
+              >
+                Zoom +
+              </button>
+              <button
+                className="btn btn-ghost"
+                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                onClick={zoomToGlobalView}
+                title="Raccourci clavier: G"
+              >
+                Vue globale
+              </button>
             </div>
 
-            {dragLinkType === 'PARENT_CHILD' ? (
-              <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-                <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                  Type:
-                </label>
-                <select
-                  className="input"
-                  style={{ width: 120, padding: 'var(--space-2)' }}
-                  value={relationshipType}
-                  onChange={(e) => setRelationshipType(e.target.value)}
-                >
-                  <option value="BIOLOGICAL">Bio</option>
-                  <option value="ADOPTIVE">Adoptive</option>
-                  <option value="FOSTER">Accueil</option>
-                </select>
-              </div>
-            ) : (
-              <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-                <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                  Union:
-                </label>
-                <select
-                  className="input"
-                  style={{ width: 120, padding: 'var(--space-2)' }}
-                  value={unionType}
-                  onChange={(e) => setUnionType(e.target.value)}
-                >
-                  <option value="MARRIAGE">Mariage</option>
-                  <option value="PACS">PACS</option>
-                  <option value="PARTNERSHIP">Partenariat</option>
-                  <option value="OTHER">Autre</option>
-                </select>
-              </div>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+              onClick={() => setWideTreeMode((value) => !value)}
+            >
+              {wideTreeMode ? 'Afficher le panneau' : 'Arbre en grand'}
+            </button>
+
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+              onClick={exportVisibleTableCsv}
+              disabled={Boolean(exportBusy)}
+            >
+              {exportBusy === 'CSV_VISIBLE' ? 'Export...' : 'Excel vue'}
+            </button>
+
+            {isAdmin && selectedPersonId && (
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                onClick={setCurrentAsDefaultRoot}
+                disabled={actionBusy}
+              >
+                Racine par défaut
+              </button>
             )}
 
-            <button
-              className="btn btn-ghost"
-              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-              disabled={!canUndo || actionBusy}
-              onClick={undoLastAction}
-            >
-              Annuler
-            </button>
+            {isAdmin && (
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                onClick={openStandaloneCreate}
+              >
+                + Nouvelle personne
+              </button>
+            )}
 
-            <button
-              className="btn btn-ghost"
-              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-              disabled={!canRedo || actionBusy}
-              onClick={redoLastAction}
-            >
-              Rétablir
-            </button>
+            {!menusCompact && (
+              <>
+                <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+                  <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
+                    Ancêtres:
+                  </label>
+                  <select
+                    className="input"
+                    style={{ width: 70, padding: 'var(--space-2)' }}
+                    value={ancestorGens}
+                    onChange={(e) => setAncestorGens(Number(e.target.value))}
+                    id="select-ancestor-generations"
+                  >
+                    {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </div>
 
-            <div style={{ position: 'relative', minWidth: 260 }}>
+                <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+                  <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
+                    Descendants:
+                  </label>
+                  <select
+                    className="input"
+                    style={{ width: 70, padding: 'var(--space-2)' }}
+                    value={descendantGens}
+                    onChange={(e) => setDescendantGens(Number(e.target.value))}
+                    id="select-descendant-generations"
+                  >
+                    {[0, 1, 2, 3, 4, 5, 6].map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+                  <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
+                    Navigation:
+                  </label>
+                  <select
+                    className="input"
+                    style={{ width: 115, padding: 'var(--space-2)' }}
+                    value={focusModeEnabled ? 'FOCUS' : 'EXPANDED'}
+                    onChange={(e) => setFocusModeEnabled(e.target.value === 'FOCUS')}
+                    id="select-navigation-mode"
+                  >
+                    <option value="FOCUS">Focus</option>
+                    <option value="EXPANDED">Étendu</option>
+                  </select>
+                </div>
+
+                <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+                  <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
+                    Glisser-relier:
+                  </label>
+                  <select
+                    className="input"
+                    style={{ width: 130, padding: 'var(--space-2)' }}
+                    value={dragLinkType}
+                    onChange={(e) => setDragLinkType(e.target.value as DragLinkType)}
+                    id="select-drag-link-mode"
+                  >
+                    <option value="PARENT_CHILD">Parenté</option>
+                    <option value="UNION">Union</option>
+                  </select>
+                </div>
+
+                {dragLinkType === 'PARENT_CHILD' ? (
+                  <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+                    <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
+                      Type:
+                    </label>
+                    <select
+                      className="input"
+                      style={{ width: 120, padding: 'var(--space-2)' }}
+                      value={relationshipType}
+                      onChange={(e) => setRelationshipType(e.target.value)}
+                    >
+                      <option value="BIOLOGICAL">Bio</option>
+                      <option value="ADOPTIVE">Adoptive</option>
+                      <option value="FOSTER">Accueil</option>
+                    </select>
+                  </div>
+                ) : (
+                  <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+                    <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
+                      Union:
+                    </label>
+                    <select
+                      className="input"
+                      style={{ width: 120, padding: 'var(--space-2)' }}
+                      value={unionType}
+                      onChange={(e) => setUnionType(e.target.value)}
+                    >
+                      <option value="MARRIAGE">Mariage</option>
+                      <option value="PACS">PACS</option>
+                      <option value="PARTNERSHIP">Partenariat</option>
+                      <option value="OTHER">Autre</option>
+                    </select>
+                  </div>
+                )}
+
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                  disabled={!canUndo || actionBusy}
+                  onClick={undoLastAction}
+                >
+                  Annuler
+                </button>
+
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                  disabled={!canRedo || actionBusy}
+                  onClick={redoLastAction}
+                >
+                  Rétablir
+                </button>
+
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                  onClick={exportVisibleAsPng}
+                  disabled={Boolean(exportBusy)}
+                >
+                  {exportBusy === 'PNG' ? 'Export PNG...' : 'Export PNG'}
+                </button>
+
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                  onClick={exportVisibleAsPdf}
+                  disabled={Boolean(exportBusy)}
+                >
+                  {exportBusy === 'PDF' ? 'Export PDF...' : 'Export PDF'}
+                </button>
+
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                  onClick={exportVisibleTableCsv}
+                  disabled={Boolean(exportBusy)}
+                >
+                  {exportBusy === 'CSV_VISIBLE' ? 'Export CSV...' : 'CSV vue (Excel)'}
+                </button>
+
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                  onClick={exportSelectedBranchCsv}
+                  disabled={Boolean(exportBusy)}
+                >
+                  {exportBusy === 'CSV_BRANCH' ? 'Export branche...' : 'CSV branche'}
+                </button>
+              </>
+            )}
+
+            <div style={{ position: 'relative', minWidth: menusCompact ? 220 : 260, flex: menusCompact ? '1 1 260px' : undefined }}>
               <input
                 className="input"
                 id="focus-person-input"
@@ -1239,35 +2516,60 @@ function TreeFlow() {
 
           <style>{`
             .tree-controls {
+              position: absolute;
+              top: var(--space-3);
+              left: var(--space-3);
+              right: var(--space-3);
+              z-index: 15;
               display: flex;
-              align-items: center;
+              align-items: flex-start;
               justify-content: space-between;
-              padding: var(--space-3) var(--space-6);
-              background: var(--color-bg-secondary);
-              border-bottom: 1px solid var(--color-border);
-              gap: var(--space-4);
-              flex-shrink: 0;
+              padding: var(--space-2) var(--space-3);
+              background: var(--color-surface-glass);
+              border: 1px solid var(--color-border);
+              border-radius: var(--radius-lg);
+              box-shadow: var(--shadow-md);
+              backdrop-filter: blur(12px);
+              gap: var(--space-3);
               flex-wrap: wrap;
+              transition: opacity var(--transition-fast), transform var(--transition-fast);
             }
 
             .tree-controls select {
               background: var(--color-bg-tertiary);
             }
 
+            .tree-controls[data-compact='true'] {
+              gap: var(--space-2);
+            }
+
+            .tree-controls[data-visible='false'] {
+              opacity: 0;
+              transform: translateY(-10px);
+              pointer-events: none;
+            }
+
+            .tree-controls[data-presentation='true'] {
+              opacity: 0;
+              transform: translateY(-12px);
+              pointer-events: none;
+            }
+
             @media (max-width: 1200px) {
               .tree-controls {
-                align-items: stretch;
+                left: var(--space-2);
+                right: var(--space-2);
               }
             }
           `}</style>
         </div>
 
         {/* ─── Tree Canvas ───────────────────── */}
-        <div style={{ flex: 1, position: 'relative' }}>
+        <div ref={treeCanvasRef} style={{ flex: 1, position: 'relative' }}>
           {warning && !error && (
             <div style={{
               position: 'absolute',
-              top: 'var(--space-3)',
+              top: overlayTopOffset,
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: 12,
@@ -1308,7 +2610,7 @@ function TreeFlow() {
         {transitioning && (
           <div style={{
             position: 'absolute',
-            top: 'var(--space-3)',
+            top: overlayTopOffset,
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 10,
@@ -1351,9 +2653,16 @@ function TreeFlow() {
                 <button className="btn btn-secondary" onClick={loadTree}>
                   🔄 Réessayer
                 </button>
-                <a href="/admin" className="btn btn-primary">
-                  Accéder au panneau Admin
-                </a>
+                {authChecked && isAdmin && (
+                  <button className="btn btn-primary" onClick={openStandaloneCreate}>
+                    Créer la première personne
+                  </button>
+                )}
+                {(!authChecked || !isAdmin) && (
+                  <a href="/admin" className="btn btn-primary">
+                    Accéder au panneau Admin
+                  </a>
+                )}
               </div>
             </div>
           </div>
@@ -1383,24 +2692,26 @@ function TreeFlow() {
             }}
           >
             <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="hsla(225, 15%, 25%, 0.3)" />
-            <Controls position="bottom-left" />
-            <MiniMap
-              position="bottom-right"
-              nodeColor={(node) => {
-                const gender = (node.data as any)?.person?.gender;
-                if (gender === 'MALE') return 'hsl(210, 70%, 55%)';
-                if (gender === 'FEMALE') return 'hsl(330, 65%, 55%)';
-                return 'hsl(220, 12%, 50%)';
-              }}
-              maskColor="hsla(225, 25%, 5%, 0.7)"
-              pannable
-              zoomable
-            />
+            {!presentationMode && <Controls position="bottom-left" />}
+            {!presentationMode && (
+              <MiniMap
+                position="bottom-right"
+                nodeColor={(node) => {
+                  const gender = (node.data as any)?.person?.gender;
+                  if (gender === 'MALE') return 'hsl(210, 70%, 55%)';
+                  if (gender === 'FEMALE') return 'hsl(330, 65%, 55%)';
+                  return 'hsl(220, 12%, 50%)';
+                }}
+                maskColor="hsla(225, 25%, 5%, 0.7)"
+                pannable
+                zoomable
+              />
+            )}
           </ReactFlow>
         )}
 
         {/* Keyboard shortcuts hint */}
-        {!loading && !error && nodes.length > 0 && (
+        {!loading && !error && nodes.length > 0 && !presentationMode && (
           <div style={{
             position: 'absolute',
             bottom: 'var(--space-3)',
@@ -1415,7 +2726,154 @@ function TreeFlow() {
             border: '1px solid var(--color-border-subtle)',
             pointerEvents: 'none',
           }}>
-            Clic → sélectionner · Double-clic → recentrer · Glisser-relier → créer lien · Molette → zoom
+            Clic → sélectionner · Double-clic → recentrer · F → focus · +/- → zoom rapide · G → vue globale · W → largeur · M → menus
+          </div>
+        )}
+
+        {presentationMode && (
+          <button
+            className="btn btn-ghost"
+            style={{
+              position: 'absolute',
+              top: 'var(--space-3)',
+              right: 'var(--space-3)',
+              zIndex: 16,
+              background: 'var(--color-surface-glass)',
+              backdropFilter: 'blur(10px)',
+            }}
+            onClick={() => setPresentationMode(false)}
+          >
+            Quitter présentation
+          </button>
+        )}
+
+        {showStandaloneCreate && isAdmin && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 20,
+              background: 'hsla(228, 20%, 7%, 0.72)',
+              backdropFilter: 'blur(6px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 'var(--space-4)',
+            }}
+            onClick={closeStandaloneCreate}
+          >
+            <div
+              className="glass-card animate-fade-in-up"
+              style={{
+                width: 'min(620px, 100%)',
+                maxHeight: 'min(88vh, 760px)',
+                overflowY: 'auto',
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 'var(--space-3)' }}>
+                <div>
+                  <h3 style={{ marginBottom: 'var(--space-1)' }}>Créer une personne depuis l&apos;accueil</h3>
+                  <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
+                    Démarrez l&apos;arbre ici, puis ajoutez parents, enfants, unions et co-parents depuis le panneau de sélection.
+                  </p>
+                </div>
+                <button className="btn btn-ghost" onClick={closeStandaloneCreate}>Fermer</button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)', marginTop: 'var(--space-4)' }}>
+                <div className="input-group">
+                  <label className="input-label">Prénoms *</label>
+                  <input
+                    className="input"
+                    value={standalonePersonForm.givenNames}
+                    onChange={(e) => setStandalonePersonForm((prev) => ({ ...prev, givenNames: e.target.value }))}
+                    placeholder="Ex: Marie Claire"
+                  />
+                </div>
+
+                <div className="input-group">
+                  <label className="input-label">Genre</label>
+                  <select
+                    className="input"
+                    value={standalonePersonForm.gender}
+                    onChange={(e) => setStandalonePersonForm((prev) => ({ ...prev, gender: e.target.value }))}
+                  >
+                    <option value="UNKNOWN">Inconnu</option>
+                    <option value="MALE">Homme</option>
+                    <option value="FEMALE">Femme</option>
+                    <option value="OTHER">Autre</option>
+                  </select>
+                </div>
+
+                <div className="input-group">
+                  <label className="input-label">Nom d&apos;usage</label>
+                  <input
+                    className="input"
+                    value={standalonePersonForm.usageSurname}
+                    onChange={(e) => setStandalonePersonForm((prev) => ({ ...prev, usageSurname: e.target.value }))}
+                    placeholder="Ex: Martin"
+                  />
+                </div>
+
+                <div className="input-group">
+                  <label className="input-label">Nom de naissance</label>
+                  <input
+                    className="input"
+                    value={standalonePersonForm.birthSurname}
+                    onChange={(e) => setStandalonePersonForm((prev) => ({ ...prev, birthSurname: e.target.value }))}
+                    placeholder="Ex: Dupont"
+                  />
+                </div>
+
+                <div className="input-group">
+                  <label className="input-label">Date de naissance</label>
+                  <input
+                    className="input"
+                    type="date"
+                    value={standalonePersonForm.birthDate}
+                    onChange={(e) => setStandalonePersonForm((prev) => ({ ...prev, birthDate: e.target.value }))}
+                  />
+                </div>
+
+                <div className="input-group">
+                  <label className="input-label">Lieu de naissance</label>
+                  <input
+                    className="input"
+                    value={standalonePersonForm.birthPlace}
+                    onChange={(e) => setStandalonePersonForm((prev) => ({ ...prev, birthPlace: e.target.value }))}
+                    placeholder="Ex: Nantes"
+                  />
+                </div>
+              </div>
+
+              <label
+                style={{
+                  marginTop: 'var(--space-4)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 'var(--space-2)',
+                  fontSize: 'var(--text-sm)',
+                  color: 'var(--color-text-secondary)',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={standalonePersonForm.isRootDefault}
+                  onChange={(e) => setStandalonePersonForm((prev) => ({ ...prev, isRootDefault: e.target.checked }))}
+                />
+                Définir cette personne comme racine par défaut
+              </label>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)', marginTop: 'var(--space-5)' }}>
+                <button className="btn btn-ghost" onClick={closeStandaloneCreate} disabled={standaloneCreateBusy}>
+                  Annuler
+                </button>
+                <button className="btn btn-primary" onClick={createStandalonePerson} disabled={standaloneCreateBusy}>
+                  {standaloneCreateBusy ? 'Création...' : 'Créer la personne'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -1423,15 +2881,23 @@ function TreeFlow() {
       </div>
 
       {/* ─── Interactive Side Panel ────────────────── */}
-      {selectedPerson && (
+      {showSelectionPanel && selectedPerson && (
         <aside style={{
-          height: '100vh',
-          borderLeft: '1px solid var(--color-border)',
-          background: 'var(--color-bg-secondary)',
+          position: 'absolute',
+          top: overlayTopOffset,
+          right: 'var(--space-3)',
+          bottom: 'var(--space-3)',
+          width: 'min(430px, calc(100vw - 2 * var(--space-3)))',
+          zIndex: 14,
+          border: '1px solid var(--color-border)',
+          borderRadius: 'var(--radius-xl)',
+          background: 'var(--color-surface-glass)',
+          backdropFilter: 'blur(14px)',
+          boxShadow: 'var(--shadow-lg)',
           overflowY: 'auto',
-          padding: 'var(--space-4)',
+          padding: 'var(--space-3)',
         }}>
-          <div className="glass-card" style={{ padding: 'var(--space-4)' }}>
+          <div className="glass-card" style={{ padding: 'var(--space-3)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)', alignItems: 'flex-start' }}>
               <div>
                 <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -1445,290 +2911,475 @@ function TreeFlow() {
                   {selectedPersonNormalized?.birthPlace ? ` · ${selectedPersonNormalized.birthPlace}` : ''}
                 </div>
               </div>
-              <button className="btn btn-ghost" style={{ padding: 'var(--space-1) var(--space-2)' }} onClick={() => setSelectedPersonId(null)}>
-                Fermer
-              </button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)', marginTop: 'var(--space-4)' }}>
-              <button className="btn btn-secondary" onClick={goToPersonDetails}>
-                Voir fiche
-              </button>
-              <button className="btn btn-secondary" onClick={setCurrentAsTreeRoot}>
-                Centrer ici
-              </button>
-            </div>
-
-            <div style={{ marginTop: 'var(--space-4)', padding: 'var(--space-3)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--color-bg-primary)' }}>
-              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
-                Édition généalogique
+              <div style={{ display: 'flex', gap: 'var(--space-1)' }}>
+                <button
+                  className="btn btn-ghost"
+                  style={{ padding: 'var(--space-1) var(--space-2)' }}
+                  onClick={() => setWideTreeMode(true)}
+                >
+                  Arbre en grand
+                </button>
+                <button className="btn btn-ghost" style={{ padding: 'var(--space-1) var(--space-2)' }} onClick={() => setSelectedPersonId(null)}>
+                  Fermer
+                </button>
               </div>
+            </div>
 
-              {!authChecked && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                  <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
-                  Vérification des droits...
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
+              <button className={`btn ${sidePanelTab === 'SUMMARY' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setSidePanelTab('SUMMARY')}>
+                Résumé
+              </button>
+              <button className={`btn ${sidePanelTab === 'EDIT' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setSidePanelTab('EDIT')}>
+                Édition
+              </button>
+              <button className={`btn ${sidePanelTab === 'HISTORY' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setSidePanelTab('HISTORY')}>
+                Historique
+              </button>
+            </div>
+
+            {sidePanelTab === 'SUMMARY' && (
+              <div style={{ marginTop: 'var(--space-3)', display: 'grid', gap: 'var(--space-3)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
+                  <button className="btn btn-secondary" onClick={goToPersonDetails}>
+                    Voir fiche
+                  </button>
+                  <button className="btn btn-secondary" onClick={setCurrentAsTreeRoot}>
+                    Centrer ici
+                  </button>
                 </div>
-              )}
 
-              {authChecked && !isAdmin && (
-                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-amber)' }}>
-                  Connectez-vous en administrateur dans <a href="/admin">Admin</a> pour créer et lier des personnes directement depuis l'arbre.
+                <div style={{ padding: 'var(--space-3)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--color-bg-primary)' }}>
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-2)' }}>
+                    Navigation rapide
+                  </div>
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                    F: focus personne · +/-: zoom rapide · G: vue globale · W: arbre large · M: menus discrets.
+                  </div>
                 </div>
-              )}
 
-              {authChecked && isAdmin && (
-                <>
-                  <div style={{ marginTop: 'var(--space-2)' }}>
-                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-2)' }}>
-                      Actions rapides par défaut
+                <div style={{ padding: 'var(--space-3)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--color-bg-primary)' }}>
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-2)' }}>
+                    Avec qui ont eu des enfants
+                  </div>
+
+                  {familySummary.families.length === 0 && familySummary.childrenWithoutUnion.length === 0 && (
+                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                      Aucune parentalité visible dans le graphe actuel.
+                    </div>
+                  )}
+
+                  {familySummary.families.length > 0 && (
+                    <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+                      {familySummary.families.map((family) => (
+                        <div key={family.unionId} style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md)', padding: 'var(--space-2)' }}>
+                          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-1)' }}>
+                            Union avec <strong>{family.partnerName}</strong>
+                          </div>
+                          {family.children.length > 0 ? (
+                            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+                              {family.children.map((child) => child.name).join(' · ')}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                              Pas d&apos;enfant visible pour cette union.
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {familySummary.childrenWithoutUnion.length > 0 && (
+                    <div style={{ marginTop: 'var(--space-2)', fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                      Enfants sans union visible: {familySummary.childrenWithoutUnion.map((child) => child.name).join(' · ')}
+                    </div>
+                  )}
+                </div>
+
+                {isAdmin && (
+                  <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+                    <button className="btn btn-secondary" onClick={setCurrentAsDefaultRoot} disabled={actionBusy}>
+                      Définir cette personne comme racine par défaut
+                    </button>
+                  </div>
+                )}
+
+                {isAdmin && (
+                  <div style={{ padding: 'var(--space-3)', border: '1px solid var(--color-rose)', borderRadius: 'var(--radius-lg)', background: 'var(--color-rose-subtle)' }}>
+                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-rose)', marginBottom: 'var(--space-2)', fontWeight: 600 }}>
+                      Suppression ciblée
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
-                      <button
-                        className="btn btn-ghost"
-                        style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
-                        onClick={() => applyQuickTemplate('MOTHER')}
-                      >
-                        + Mère
+                      <button className="btn btn-ghost" style={{ fontSize: 'var(--text-xs)' }} onClick={deleteSelectedPerson} disabled={actionBusy}>
+                        Supprimer personne
                       </button>
-                      <button
-                        className="btn btn-ghost"
-                        style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
-                        onClick={() => applyQuickTemplate('FATHER')}
-                      >
-                        + Père
-                      </button>
-                      <button
-                        className="btn btn-ghost"
-                        style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
-                        onClick={() => applyQuickTemplate('CHILD')}
-                      >
-                        + Enfant
-                      </button>
-                      <button
-                        className="btn btn-ghost"
-                        style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
-                        onClick={() => applyQuickTemplate('SPOUSE')}
-                      >
-                        + Conjoint
+                      <button className="btn btn-ghost" style={{ fontSize: 'var(--text-xs)' }} onClick={deleteSelectedBranch} disabled={actionBusy}>
+                        Supprimer branche
                       </button>
                     </div>
                   </div>
+                )}
+              </div>
+            )}
 
-                  <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
-                    <label className="input-label">Action</label>
-                    <select className="input" value={linkMode} onChange={(e) => { setLinkMode(e.target.value as LinkMode); clearActionState(); }}>
-                      <option value="PARENT">Ajouter un parent</option>
-                      <option value="CHILD">Ajouter un enfant</option>
-                      <option value="SPOUSE">Ajouter un conjoint</option>
-                    </select>
+            {sidePanelTab === 'EDIT' && (
+              <div style={{ marginTop: 'var(--space-4)', padding: 'var(--space-3)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--color-bg-primary)' }}>
+                <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
+                  Édition généalogique
+                </div>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginBottom: 'var(--space-2)' }}>
+                  Assistant pro: unions multiples, couples de même sexe et types de filiation (biologique, adoptive, accueil).
+                </div>
+
+                {!authChecked && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+                    <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                    Vérification des droits...
                   </div>
+                )}
 
-                  <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
-                    <label className="input-label">Source</label>
-                    <select className="input" value={linkTarget} onChange={(e) => { setLinkTarget(e.target.value as LinkTarget); clearActionState(); }}>
-                      <option value="new">Créer une nouvelle personne</option>
-                      <option value="existing">Lier une personne existante</option>
-                    </select>
+                {authChecked && !isAdmin && (
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-amber)' }}>
+                    Connectez-vous en administrateur dans <a href="/admin">Admin</a> pour créer et lier des personnes directement depuis l'arbre.
                   </div>
+                )}
 
-                  {linkMode !== 'SPOUSE' && (
-                    <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
-                      <label className="input-label">Type de filiation</label>
-                      <select className="input" value={relationshipType} onChange={(e) => setRelationshipType(e.target.value)}>
-                        <option value="BIOLOGICAL">Biologique</option>
-                        <option value="ADOPTIVE">Adoptive</option>
-                        <option value="FOSTER">Accueil</option>
-                      </select>
-                    </div>
-                  )}
-
-                  {linkMode === 'SPOUSE' && (
-                    <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
-                      <label className="input-label">Type d'union</label>
-                      <select className="input" value={unionType} onChange={(e) => setUnionType(e.target.value)}>
-                        <option value="MARRIAGE">Mariage</option>
-                        <option value="PACS">PACS</option>
-                        <option value="PARTNERSHIP">Partenariat</option>
-                        <option value="OTHER">Autre</option>
-                      </select>
-                    </div>
-                  )}
-
-                  {linkMode === 'CHILD' && linkTarget === 'new' && (
-                    <div
-                      style={{
-                        marginTop: 'var(--space-3)',
-                        padding: 'var(--space-2) var(--space-3)',
-                        borderRadius: 'var(--radius-md)',
-                        border: '1px solid var(--color-border-subtle)',
-                        background: 'var(--color-bg-secondary)',
-                      }}
-                    >
-                      <label
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 'var(--space-2)',
-                          fontSize: 'var(--text-xs)',
-                          color: 'var(--color-text-secondary)',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={assistantCreateMissingParent}
-                          onChange={(e) => setAssistantCreateMissingParent(e.target.checked)}
-                        />
-                        Assistant familial: compléter automatiquement le foyer
-                      </label>
-                      {assistantCreateMissingParent && (
-                        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: 'var(--space-2)' }}>
-                          {existingPartnerId
-                            ? 'Le second parent existant sera relié automatiquement à l\'enfant.'
-                            : 'Un second parent provisoire et une union seront créés automatiquement.'}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {linkTarget === 'new' && (
-                    <div style={{ marginTop: 'var(--space-3)', display: 'grid', gap: 'var(--space-2)' }}>
-                      <input
-                        className="input"
-                        placeholder="Prénoms *"
-                        value={newPersonForm.givenNames}
-                        onChange={(e) => setNewPersonForm((prev) => ({ ...prev, givenNames: e.target.value }))}
-                      />
-                      <input
-                        className="input"
-                        placeholder="Nom d'usage"
-                        value={newPersonForm.usageSurname}
-                        onChange={(e) => setNewPersonForm((prev) => ({ ...prev, usageSurname: e.target.value }))}
-                      />
-                      <input
-                        className="input"
-                        placeholder="Nom de naissance"
-                        value={newPersonForm.birthSurname}
-                        onChange={(e) => setNewPersonForm((prev) => ({ ...prev, birthSurname: e.target.value }))}
-                      />
-                      <select
-                        className="input"
-                        value={newPersonForm.gender}
-                        onChange={(e) => setNewPersonForm((prev) => ({ ...prev, gender: e.target.value }))}
-                      >
-                        <option value="UNKNOWN">Inconnu</option>
-                        <option value="MALE">Homme</option>
-                        <option value="FEMALE">Femme</option>
-                        <option value="OTHER">Autre</option>
-                      </select>
-                      <input
-                        className="input"
-                        type="date"
-                        value={newPersonForm.birthDate}
-                        onChange={(e) => setNewPersonForm((prev) => ({ ...prev, birthDate: e.target.value }))}
-                      />
-                      <input
-                        className="input"
-                        placeholder="Lieu de naissance"
-                        value={newPersonForm.birthPlace}
-                        onChange={(e) => setNewPersonForm((prev) => ({ ...prev, birthPlace: e.target.value }))}
-                      />
-
-                      <button className="btn btn-primary" onClick={createAndAttachNewPerson} disabled={actionBusy}>
-                        {actionBusy ? 'Traitement...' : selectedPersonLabel}
-                      </button>
-                    </div>
-                  )}
-
-                  {linkTarget === 'existing' && (
-                    <div style={{ marginTop: 'var(--space-3)' }}>
-                      <input
-                        className="input"
-                        placeholder="Rechercher une personne existante..."
-                        value={existingQuery}
-                        onChange={(e) => setExistingQuery(e.target.value)}
-                      />
-                      <div style={{ marginTop: 'var(--space-2)', display: 'grid', gap: 'var(--space-2)', maxHeight: 220, overflowY: 'auto' }}>
-                        {existingLoading && (
-                          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                            Recherche en cours...
-                          </div>
-                        )}
-                        {!existingLoading && existingResults.length === 0 && existingQuery.trim().length >= 2 && (
-                          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
-                            Aucun résultat.
-                          </div>
-                        )}
-                        {!existingLoading && existingResults.map((person) => (
-                          <button
-                            key={person.id}
-                            className="btn btn-ghost"
-                            style={{ justifyContent: 'space-between', fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
-                            onClick={() => linkExistingPerson(person.id)}
-                            disabled={actionBusy}
-                          >
-                            <span>{personDisplayName(person)}</span>
-                            <span style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>{person.id.slice(0, 8)}</span>
-                          </button>
-                        ))}
+                {authChecked && isAdmin && (
+                  <>
+                    <div style={{ marginTop: 'var(--space-2)' }}>
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-2)' }}>
+                        Actions rapides par défaut
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-2)' }}>
+                        <button
+                          className="btn btn-ghost"
+                          style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
+                          onClick={() => applyQuickTemplate('MOTHER')}
+                        >
+                          + Mère
+                        </button>
+                        <button
+                          className="btn btn-ghost"
+                          style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
+                          onClick={() => applyQuickTemplate('FATHER')}
+                        >
+                          + Père
+                        </button>
+                        <button
+                          className="btn btn-ghost"
+                          style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
+                          onClick={() => applyQuickTemplate('PARENT')}
+                        >
+                          + Parent
+                        </button>
+                        <button
+                          className="btn btn-ghost"
+                          style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
+                          onClick={() => applyQuickTemplate('CHILD')}
+                        >
+                          + Enfant
+                        </button>
+                        <button
+                          className="btn btn-ghost"
+                          style={{ fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
+                          onClick={() => applyQuickTemplate('SPOUSE')}
+                        >
+                          + Conjoint
+                        </button>
                       </div>
                     </div>
-                  )}
 
-                  <button className="btn btn-ghost" style={{ width: '100%', marginTop: 'var(--space-3)' }} onClick={setCurrentAsDefaultRoot} disabled={actionBusy}>
-                    Définir cette personne comme racine par défaut
-                  </button>
-
-                  {actionError && (
-                    <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-2) var(--space-3)', border: '1px solid var(--color-rose)', borderRadius: 'var(--radius-md)', color: 'var(--color-rose)', background: 'var(--color-rose-subtle)', fontSize: 'var(--text-xs)' }}>
-                      {actionError}
+                    <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
+                      <label className="input-label">Action</label>
+                      <select className="input" value={linkMode} onChange={(e) => { setLinkMode(e.target.value as LinkMode); clearActionState(); }}>
+                        <option value="PARENT">Ajouter un parent</option>
+                        <option value="CHILD">Ajouter un enfant</option>
+                        <option value="SPOUSE">Ajouter un conjoint</option>
+                      </select>
                     </div>
-                  )}
 
-                  {actionSuccess && (
-                    <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-2) var(--space-3)', border: '1px solid var(--color-emerald)', borderRadius: 'var(--radius-md)', color: 'var(--color-emerald)', background: 'var(--color-emerald-subtle)', fontSize: 'var(--text-xs)' }}>
-                      {actionSuccess}
+                    <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
+                      <label className="input-label">Source</label>
+                      <select className="input" value={linkTarget} onChange={(e) => { setLinkTarget(e.target.value as LinkTarget); clearActionState(); }}>
+                        <option value="new">Créer une nouvelle personne</option>
+                        <option value="existing">Lier une personne existante</option>
+                      </select>
                     </div>
-                  )}
 
-                  <div style={{ marginTop: 'var(--space-4)' }}>
-                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-2)' }}>
-                      Journal de session ({historyState.entries.length})
-                    </div>
-                    <div style={{ display: 'grid', gap: 'var(--space-2)', maxHeight: 180, overflowY: 'auto' }}>
-                      {historyState.entries.length === 0 && (
+                    {linkMode !== 'SPOUSE' && (
+                      <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
+                        <label className="input-label">Type de filiation</label>
+                        <select className="input" value={relationshipType} onChange={(e) => setRelationshipType(e.target.value)}>
+                          <option value="BIOLOGICAL">Biologique</option>
+                          <option value="ADOPTIVE">Adoptive</option>
+                          <option value="FOSTER">Accueil</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {linkMode === 'SPOUSE' && (
+                      <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
+                        <label className="input-label">Type d'union</label>
+                        <select className="input" value={unionType} onChange={(e) => setUnionType(e.target.value)}>
+                          <option value="MARRIAGE">Mariage</option>
+                          <option value="PACS">PACS</option>
+                          <option value="PARTNERSHIP">Partenariat</option>
+                          <option value="OTHER">Autre</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {(familyContextLoading || familyContextError) && (
+                      <div
+                        style={{
+                          marginTop: 'var(--space-3)',
+                          padding: 'var(--space-2) var(--space-3)',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px solid var(--color-border-subtle)',
+                          background: 'var(--color-bg-secondary)',
+                          fontSize: 'var(--text-xs)',
+                          color: 'var(--color-text-secondary)',
+                        }}
+                      >
+                        {familyContextLoading && 'Chargement du contexte familial...'}
+                        {!familyContextLoading && familyContextError && familyContextError}
+                      </div>
+                    )}
+
+                    {linkMode === 'CHILD' && (
+                      <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
+                        <label className="input-label">Contexte familial de l&apos;enfant</label>
+                        <select
+                          className="input"
+                          value={selectedChildUnionId}
+                          onChange={(e) => {
+                            setSelectedChildUnionId(e.target.value);
+                            clearActionState();
+                          }}
+                        >
+                          <option value="">Parent sélectionné uniquement</option>
+                          {childUnionOptions.map((union) => (
+                            <option key={union.id} value={union.id}>
+                              {union.partnerName} · {unionTypeLabel(union.unionType)}
+                            </option>
+                          ))}
+                        </select>
                         <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
-                          Aucune action enregistrée pour le moment.
+                          {selectedChildUnion
+                            ? `Le co-parent ${selectedChildUnion.partnerName} sera aussi relié à l'enfant (${relationshipType.toLowerCase()}).`
+                            : 'Vous pouvez choisir une union précise (y compris couples de même sexe) ou garder un parent unique.'}
                         </div>
-                      )}
-                      {[...historyState.entries].reverse().slice(0, 8).map((entry, reverseIndex) => {
-                        const realIndex = historyState.entries.length - 1 - reverseIndex;
-                        const isApplied = realIndex <= historyState.index;
-                        return (
-                          <div
-                            key={entry.id}
-                            style={{
-                              fontSize: 'var(--text-xs)',
-                              color: isApplied ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
-                              padding: 'var(--space-2)',
-                              borderRadius: 'var(--radius-md)',
-                              border: '1px solid var(--color-border-subtle)',
-                              background: isApplied ? 'var(--color-bg-secondary)' : 'var(--color-bg-primary)',
-                            }}
-                          >
-                            <div>{entry.label}</div>
-                            <div style={{ marginTop: '2px', opacity: 0.8 }}>
-                              {new Date(entry.createdAt).toLocaleTimeString('fr-FR')} · {isApplied ? 'actif' : 'annulé'}
-                            </div>
+                      </div>
+                    )}
+
+                    {linkMode === 'PARENT' && parentOptionsForUnion.length > 0 && (
+                      <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
+                        <label className="input-label">Union parentale à créer (optionnel)</label>
+                        <select
+                          className="input"
+                          value={parentUnionLinkParentId}
+                          onChange={(e) => {
+                            setParentUnionLinkParentId(e.target.value);
+                            clearActionState();
+                          }}
+                        >
+                          <option value="NONE">Ne pas créer d&apos;union</option>
+                          {parentOptionsForUnion.map((parentOption) => (
+                            <option key={parentOption.parentId} value={parentOption.parentId}>
+                              Relier avec {parentOption.parentName}
+                            </option>
+                          ))}
+                        </select>
+                        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                          Pratique pour rattacher rapidement un nouveau parent à un foyer existant.
+                        </div>
+                      </div>
+                    )}
+
+                    {linkMode === 'CHILD' && !selectedChildUnion && (
+                      <div
+                        style={{
+                          marginTop: 'var(--space-3)',
+                          padding: 'var(--space-2) var(--space-3)',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px solid var(--color-border-subtle)',
+                          background: 'var(--color-bg-secondary)',
+                        }}
+                      >
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 'var(--space-2)',
+                            fontSize: 'var(--text-xs)',
+                            color: 'var(--color-text-secondary)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={assistantCreateMissingParent}
+                            onChange={(e) => setAssistantCreateMissingParent(e.target.checked)}
+                          />
+                          Créer un co-parent provisoire et une union automatiquement
+                        </label>
+                        {assistantCreateMissingParent && (
+                          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: 'var(--space-2)' }}>
+                            Un co-parent neutre sera créé (sans hypothèse de sexe), relié en union puis relié à l&apos;enfant.
                           </div>
-                        );
-                      })}
+                        )}
+                      </div>
+                    )}
+
+                    {linkTarget === 'new' && (
+                      <div style={{ marginTop: 'var(--space-3)', display: 'grid', gap: 'var(--space-2)' }}>
+                        <input
+                          className="input"
+                          placeholder="Prénoms *"
+                          value={newPersonForm.givenNames}
+                          onChange={(e) => setNewPersonForm((prev) => ({ ...prev, givenNames: e.target.value }))}
+                        />
+                        <input
+                          className="input"
+                          placeholder="Nom d'usage"
+                          value={newPersonForm.usageSurname}
+                          onChange={(e) => setNewPersonForm((prev) => ({ ...prev, usageSurname: e.target.value }))}
+                        />
+                        <input
+                          className="input"
+                          placeholder="Nom de naissance"
+                          value={newPersonForm.birthSurname}
+                          onChange={(e) => setNewPersonForm((prev) => ({ ...prev, birthSurname: e.target.value }))}
+                        />
+                        <select
+                          className="input"
+                          value={newPersonForm.gender}
+                          onChange={(e) => setNewPersonForm((prev) => ({ ...prev, gender: e.target.value }))}
+                        >
+                          <option value="UNKNOWN">Inconnu</option>
+                          <option value="MALE">Homme</option>
+                          <option value="FEMALE">Femme</option>
+                          <option value="OTHER">Autre</option>
+                        </select>
+                        <input
+                          className="input"
+                          type="date"
+                          value={newPersonForm.birthDate}
+                          onChange={(e) => setNewPersonForm((prev) => ({ ...prev, birthDate: e.target.value }))}
+                        />
+                        <input
+                          className="input"
+                          placeholder="Lieu de naissance"
+                          value={newPersonForm.birthPlace}
+                          onChange={(e) => setNewPersonForm((prev) => ({ ...prev, birthPlace: e.target.value }))}
+                        />
+
+                        <button className="btn btn-primary" onClick={createAndAttachNewPerson} disabled={actionBusy}>
+                          {actionBusy ? 'Traitement...' : selectedPersonLabel}
+                        </button>
+                      </div>
+                    )}
+
+                    {linkTarget === 'existing' && (
+                      <div style={{ marginTop: 'var(--space-3)' }}>
+                        <input
+                          className="input"
+                          placeholder="Rechercher une personne existante..."
+                          value={existingQuery}
+                          onChange={(e) => setExistingQuery(e.target.value)}
+                        />
+                        <div style={{ marginTop: 'var(--space-2)', display: 'grid', gap: 'var(--space-2)', maxHeight: 220, overflowY: 'auto' }}>
+                          {existingLoading && (
+                            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+                              Recherche en cours...
+                            </div>
+                          )}
+                          {!existingLoading && existingResults.length === 0 && existingQuery.trim().length >= 2 && (
+                            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                              Aucun résultat.
+                            </div>
+                          )}
+                          {!existingLoading && existingResults.map((person) => (
+                            <button
+                              key={person.id}
+                              className="btn btn-ghost"
+                              style={{ justifyContent: 'space-between', fontSize: 'var(--text-xs)', border: '1px solid var(--color-border-subtle)' }}
+                              onClick={() => linkExistingPerson(person.id)}
+                              disabled={actionBusy}
+                            >
+                              <span>{personDisplayName(person)}</span>
+                              <span style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>{person.id.slice(0, 8)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <button className="btn btn-ghost" style={{ width: '100%', marginTop: 'var(--space-3)' }} onClick={setCurrentAsDefaultRoot} disabled={actionBusy}>
+                      Définir cette personne comme racine par défaut
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {actionError && (
+              <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-2) var(--space-3)', border: '1px solid var(--color-rose)', borderRadius: 'var(--radius-md)', color: 'var(--color-rose)', background: 'var(--color-rose-subtle)', fontSize: 'var(--text-xs)' }}>
+                {actionError}
+              </div>
+            )}
+
+            {actionSuccess && (
+              <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-2) var(--space-3)', border: '1px solid var(--color-emerald)', borderRadius: 'var(--radius-md)', color: 'var(--color-emerald)', background: 'var(--color-emerald-subtle)', fontSize: 'var(--text-xs)' }}>
+                {actionSuccess}
+              </div>
+            )}
+
+            {sidePanelTab === 'HISTORY' && (
+              <div style={{ marginTop: 'var(--space-4)', padding: 'var(--space-3)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--color-bg-primary)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)', marginBottom: 'var(--space-3)' }}>
+                  <button className="btn btn-ghost" disabled={!canUndo || actionBusy} onClick={undoLastAction}>
+                    Annuler
+                  </button>
+                  <button className="btn btn-ghost" disabled={!canRedo || actionBusy} onClick={redoLastAction}>
+                    Rétablir
+                  </button>
+                </div>
+
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginBottom: 'var(--space-2)' }}>
+                  Journal de session ({historyState.entries.length})
+                </div>
+                <div style={{ display: 'grid', gap: 'var(--space-2)', maxHeight: 300, overflowY: 'auto' }}>
+                  {historyState.entries.length === 0 && (
+                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                      Aucune action enregistrée pour le moment.
                     </div>
-                  </div>
-                </>
-              )}
-            </div>
+                  )}
+                  {[...historyState.entries].reverse().slice(0, 16).map((entry, reverseIndex) => {
+                    const realIndex = historyState.entries.length - 1 - reverseIndex;
+                    const isApplied = realIndex <= historyState.index;
+                    return (
+                      <div
+                        key={entry.id}
+                        style={{
+                          fontSize: 'var(--text-xs)',
+                          color: isApplied ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
+                          padding: 'var(--space-2)',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px solid var(--color-border-subtle)',
+                          background: isApplied ? 'var(--color-bg-secondary)' : 'var(--color-bg-primary)',
+                        }}
+                      >
+                        <div>{entry.label}</div>
+                        <div style={{ marginTop: '2px', opacity: 0.8 }}>
+                          {new Date(entry.createdAt).toLocaleTimeString('fr-FR')} · {isApplied ? 'actif' : 'annulé'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </aside>
       )}

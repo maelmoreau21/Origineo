@@ -159,3 +159,14 @@ model User {
 
   @@map("users")
 }
+
+model SystemSetting {
+  id    String @id @default(uuid()) @db.Uuid
+  key   String @unique
+  value Json
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}

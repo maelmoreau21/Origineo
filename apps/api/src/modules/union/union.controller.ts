@@ -20,7 +20,6 @@ import { CreateUnionDto, UpdateUnionDto } from './dto/union.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('Unions')
 @Controller('unions')
@@ -36,7 +35,6 @@ export class UnionController {
     return { success: true, data: await this.unionService.create(dto) };
   }
 
-  @Public()
   @Get()
   @ApiOperation({ summary: 'List all unions (paginated)' })
   @ApiQuery({ name: 'page', required: false })
@@ -45,14 +43,12 @@ export class UnionController {
     return { success: true, data: await this.unionService.findAll(page, limit) };
   }
 
-  @Public()
   @Get('person/:personId')
   @ApiOperation({ summary: 'Get all unions for a person' })
   async findByPerson(@Param('personId', ParseUUIDPipe) personId: string) {
     return { success: true, data: await this.unionService.findByPerson(personId) };
   }
 
-  @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Get a union by ID' })
   async findOne(@Param('id', ParseUUIDPipe) id: string) {

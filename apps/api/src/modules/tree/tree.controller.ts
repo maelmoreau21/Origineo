@@ -11,14 +11,12 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { TreeService } from './tree.service';
-import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('Tree')
 @Controller('tree')
 export class TreeController {
   constructor(private readonly treeService: TreeService) {}
 
-  @Public()
   @Get(':rootPersonId')
   @ApiOperation({
     summary: 'Get tree data centered on a person with configurable depth',
@@ -43,7 +41,6 @@ export class TreeController {
     };
   }
 
-  @Public()
   @Get('relationship/:personAId/:personBId')
   @ApiOperation({ summary: 'Calculate the relationship path between two persons' })
   async getRelationshipPath(

@@ -15,6 +15,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 @Injectable()
 export class GedcomService {
   private readonly logger = new Logger(GedcomService.name);
+  private static readonly IMPORT_TRANSACTION_MAX_WAIT_MS = 10_000;
+  private static readonly IMPORT_TRANSACTION_TIMEOUT_MS = 600_000;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -70,51 +72,103 @@ export class GedcomService {
           stats.personsCreated++;
         }
 
-        // Phase 2: Create families (unions + relationships)
+        // Phase 2: Create families (unions + relationships) in batches
+        const unionCandidates = new Map<
+          string,
+          {
+            partner1Id: string;
+            partner2Id: string;
+            type: 'MARRIAGE';
+            startDate: Date | null;
+            startPlace: string | null;
+          }
+        >();
+        const relationshipCandidates = new Map<
+          string,
+          {
+            parentId: string;
+            childId: string;
+            type: 'BIOLOGICAL';
+          }
+        >();
+
+        const toPairKey = (partnerA: string, partnerB: string) => {
+          return partnerA < partnerB
+            ? `${partnerA}|${partnerB}`
+            : `${partnerB}|${partnerA}`;
+        };
+
         for (const fam of families.arraySelect()) {
-          const husbandPtr = fam.getHusband().value()?.[0]?.toString();
-          const wifePtr = fam.getWife().value()?.[0]?.toString();
+          const husbandPtr = this.extractGedcomPointer(
+            fam.getHusband().value()?.[0],
+          );
+          const wifePtr = this.extractGedcomPointer(
+            fam.getWife().value()?.[0],
+          );
 
           const partner1Id = husbandPtr ? pointerToUuid.get(husbandPtr) : null;
           const partner2Id = wifePtr ? pointerToUuid.get(wifePtr) : null;
 
-          // Create union if both partners exist
-          if (partner1Id && partner2Id) {
+          // Queue union if both partners exist
+          if (partner1Id && partner2Id && partner1Id !== partner2Id) {
             const marriageEvent = fam.getEventMarriage();
 
-            await tx.union.create({
-              data: {
+            const pairKey = toPairKey(partner1Id, partner2Id);
+            if (!unionCandidates.has(pairKey)) {
+              unionCandidates.set(pairKey, {
                 partner1Id,
                 partner2Id,
                 type: 'MARRIAGE',
                 startDate: this.parseGedcomDate(marriageEvent.getDate().value()?.[0]),
                 startPlace: marriageEvent.getPlace().value()?.[0] || null,
-              },
-            });
-            stats.unionsCreated++;
+              });
+            }
           }
 
-          // Create parent-child relationships
+          const parentIds = [partner1Id, partner2Id].filter(
+            (parentId): parentId is string => Boolean(parentId),
+          );
+          if (parentIds.length === 0) continue;
+
+          // Queue parent-child relationships
           const childPtrs = fam.getChild().value() || [];
           for (const childPtr of childPtrs) {
-            const childId = pointerToUuid.get(childPtr?.toString() || '');
+            const normalizedChildPtr = this.extractGedcomPointer(childPtr);
+            if (!normalizedChildPtr) continue;
+
+            const childId = pointerToUuid.get(normalizedChildPtr);
             if (!childId) continue;
 
-            if (partner1Id) {
-              await tx.relationship.create({
-                data: { parentId: partner1Id, childId, type: 'BIOLOGICAL' },
-              });
-              stats.relationshipsCreated++;
-            }
-
-            if (partner2Id) {
-              await tx.relationship.create({
-                data: { parentId: partner2Id, childId, type: 'BIOLOGICAL' },
-              });
-              stats.relationshipsCreated++;
+            for (const parentId of parentIds) {
+              const relationKey = `${parentId}|${childId}`;
+              if (!relationshipCandidates.has(relationKey)) {
+                relationshipCandidates.set(relationKey, {
+                  parentId,
+                  childId,
+                  type: 'BIOLOGICAL',
+                });
+              }
             }
           }
         }
+
+        if (unionCandidates.size > 0) {
+          const createdUnions = await tx.union.createMany({
+            data: Array.from(unionCandidates.values()),
+          });
+          stats.unionsCreated += createdUnions.count;
+        }
+
+        if (relationshipCandidates.size > 0) {
+          const createdRelationships = await tx.relationship.createMany({
+            data: Array.from(relationshipCandidates.values()),
+            skipDuplicates: true,
+          });
+          stats.relationshipsCreated += createdRelationships.count;
+        }
+      }, {
+        maxWait: GedcomService.IMPORT_TRANSACTION_MAX_WAIT_MS,
+        timeout: GedcomService.IMPORT_TRANSACTION_TIMEOUT_MS,
       });
 
       this.logger.log(`GEDCOM import complete: ${JSON.stringify(stats)}`);
@@ -313,6 +367,45 @@ export class GedcomService {
       };
     }
     return { givenNames: name.trim(), surname: '' };
+  }
+
+  private extractGedcomPointer(value: unknown): string | null {
+    if (!value) return null;
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }
+
+    if (typeof value === 'object') {
+      const maybeRecord = value as {
+        pointer?: (() => unknown) | unknown;
+        value?: unknown;
+        toString?: () => string;
+      };
+
+      if (typeof maybeRecord.pointer === 'function') {
+        const nested = this.extractGedcomPointer(maybeRecord.pointer());
+        if (nested) return nested;
+      } else if (typeof maybeRecord.pointer === 'string') {
+        const nested = this.extractGedcomPointer(maybeRecord.pointer);
+        if (nested) return nested;
+      }
+
+      if (Array.isArray(maybeRecord.value) && maybeRecord.value.length > 0) {
+        const nested = this.extractGedcomPointer(maybeRecord.value[0]);
+        if (nested) return nested;
+      }
+
+      if (typeof maybeRecord.toString === 'function') {
+        const text = maybeRecord.toString().trim();
+        if (text && text !== '[object Object]') {
+          return text;
+        }
+      }
+    }
+
+    return null;
   }
 
   private parseGedcomDate(dateStr?: string | null): Date | null {
