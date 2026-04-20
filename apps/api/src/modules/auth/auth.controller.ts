@@ -5,6 +5,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -19,6 +20,7 @@ import {
   LdapConfigDto,
   LoginDto,
   UpdateUserRoleDto,
+  UpdateUserStatusDto,
 } from './dto/auth.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -92,6 +94,38 @@ export class AuthController {
         id,
         dto.role,
       ),
+    };
+  }
+
+  @Patch('users/:id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Activate/deactivate a managed user (root only)' })
+  async updateManagedUserStatus(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body() dto: UpdateUserStatusDto,
+  ) {
+    return {
+      success: true,
+      data: await this.authService.updateManagedUserStatus(
+        req.user.email,
+        id,
+        dto.active,
+      ),
+    };
+  }
+
+  @Delete('users/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete a managed user (root only)' })
+  async deleteManagedUser(@Request() req: any, @Param('id') id: string) {
+    return {
+      success: true,
+      data: await this.authService.deleteManagedUser(req.user.email, id),
     };
   }
 

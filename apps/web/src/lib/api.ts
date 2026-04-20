@@ -106,6 +106,43 @@ export const personApi = {
       token,
     }),
 
+  repairRootDefaultWithOptions: (token: string, simulate = false) =>
+    apiFetch<any>(`/persons/integrity/repair-root${simulate ? '?simulate=true' : ''}`, {
+      method: 'POST',
+      token,
+    }),
+
+  getQualityRules: (token: string) =>
+    apiFetch<any>('/persons/integrity/rules', {
+      token,
+    }),
+
+  updateQualityRules: (
+    data: {
+      requireParentKnown?: boolean;
+      minBiologicalParentAge?: number;
+      maxBiologicalParentAge?: number;
+      maxLifespanYears?: number;
+    },
+    token: string,
+  ) =>
+    apiFetch<any>('/persons/integrity/rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      token,
+    }),
+
+  getRepairLogs: (token: string, limit = 40) =>
+    apiFetch<any>(`/persons/integrity/logs?limit=${limit}`, {
+      token,
+    }),
+
+  undoRepairLog: (logId: string, token: string, simulate = false) =>
+    apiFetch<any>(`/persons/integrity/logs/${logId}/undo${simulate ? '?simulate=true' : ''}`, {
+      method: 'POST',
+      token,
+    }),
+
   connectDisconnectedComponent: (
     data: {
       componentPersonId: string;
@@ -113,6 +150,7 @@ export const personApi = {
       linkMode?: 'PARENT_OF_COMPONENT' | 'CHILD_OF_COMPONENT' | 'UNION';
       relationshipType?: 'BIOLOGICAL' | 'ADOPTIVE' | 'FOSTER';
       unionType?: 'MARRIAGE' | 'PACS' | 'PARTNERSHIP' | 'OTHER';
+      simulate?: boolean;
     },
     token: string,
   ) =>
@@ -122,9 +160,17 @@ export const personApi = {
       token,
     }),
 
-  deleteDisconnectedComponent: (personId: string, token: string) =>
-    apiFetch<any>(`/persons/integrity/component/${personId}?confirm=DELETE_COMPONENT`, {
+  deleteDisconnectedComponent: (personId: string, token: string, simulate = false) =>
+    apiFetch<any>(
+      `/persons/integrity/component/${personId}?confirm=DELETE_COMPONENT${simulate ? '&simulate=true' : ''}`,
+      {
       method: 'DELETE',
+      token,
+      },
+    ),
+
+  getHistory: (personId: string, limit = 120, token?: string) =>
+    apiFetch<any>(`/persons/${personId}/history?limit=${limit}`, {
       token,
     }),
 };
@@ -141,13 +187,42 @@ export const treeApi = {
 };
 
 // ─── Search API ──────────────────────────────
+type SearchFilters = {
+  q?: string;
+  place?: string;
+  gender?: 'MALE' | 'FEMALE' | 'OTHER' | 'UNKNOWN' | '';
+  birthDateFrom?: string;
+  birthDateTo?: string;
+  deathDateFrom?: string;
+  deathDateTo?: string;
+};
+
 export const searchApi = {
-  search: (query: string, page = 1, limit = 20) =>
-    apiFetch<any>(`/search?q=${encodeURIComponent(query)}&page=${page}&limit=${limit}`),
+  search: (queryOrFilters: string | SearchFilters, page = 1, limit = 20) => {
+    if (typeof queryOrFilters === 'string') {
+      return apiFetch<any>(`/search?q=${encodeURIComponent(queryOrFilters)}&page=${page}&limit=${limit}`);
+    }
+
+    const params = new URLSearchParams();
+    if (queryOrFilters.q?.trim()) params.set('q', queryOrFilters.q.trim());
+    if (queryOrFilters.place?.trim()) params.set('place', queryOrFilters.place.trim());
+    if (queryOrFilters.gender) params.set('gender', queryOrFilters.gender);
+    if (queryOrFilters.birthDateFrom) params.set('birthDateFrom', queryOrFilters.birthDateFrom);
+    if (queryOrFilters.birthDateTo) params.set('birthDateTo', queryOrFilters.birthDateTo);
+    if (queryOrFilters.deathDateFrom) params.set('deathDateFrom', queryOrFilters.deathDateFrom);
+    if (queryOrFilters.deathDateTo) params.set('deathDateTo', queryOrFilters.deathDateTo);
+    params.set('page', String(page));
+    params.set('limit', String(limit));
+
+    return apiFetch<any>(`/search?${params.toString()}`);
+  },
 };
 
 // ─── Relationship API ────────────────────────
 export const relationshipApi = {
+  getAll: (page = 1, limit = 100) =>
+    apiFetch<any>(`/relationships?page=${page}&limit=${limit}`),
+
   create: (data: any, token: string) =>
     apiFetch<any>('/relationships', {
       method: 'POST',
@@ -167,6 +242,9 @@ export const relationshipApi = {
 
 // ─── Union API ───────────────────────────────
 export const unionApi = {
+  getAll: (page = 1, limit = 100) =>
+    apiFetch<any>(`/unions?page=${page}&limit=${limit}`),
+
   create: (data: any, token: string) =>
     apiFetch<any>('/unions', {
       method: 'POST',
@@ -224,6 +302,19 @@ export const authApi = {
     apiFetch<any>(`/auth/users/${id}/role`, {
       method: 'PATCH',
       body: JSON.stringify({ role }),
+      token,
+    }),
+
+  updateUserStatus: (id: string, active: boolean, token: string) =>
+    apiFetch<any>(`/auth/users/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ active }),
+      token,
+    }),
+
+  deleteUser: (id: string, token: string) =>
+    apiFetch<any>(`/auth/users/${id}`, {
+      method: 'DELETE',
       token,
     }),
 

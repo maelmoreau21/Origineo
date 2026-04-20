@@ -36,6 +36,7 @@ interface LdapStoredConfig {
 const ROOT_IDENTIFIER = 'root';
 const ROOT_DEFAULT_PASSWORD = 'root';
 const LDAP_SETTING_KEY = 'AUTH_LDAP_CONFIG';
+const DISABLED_USERS_SETTING_KEY = 'AUTH_DISABLED_USERS';
 const DEFAULT_LDAP_FILTER = '(|(sAMAccountName={{username}})(mail={{username}})(uid={{username}}))';
 
 @Injectable()
@@ -59,6 +60,10 @@ export class AuthService implements OnModuleInit {
     });
 
     if (localUser) {
+      if (await this.isUserDisabled(localUser.id)) {
+        throw new UnauthorizedException('Account disabled');
+      }
+
       const isPasswordValid = await bcrypt.compare(password, localUser.passwordHash);
       if (isPasswordValid) {
         return this.buildAuthResponse(localUser);
@@ -89,9 +94,39 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('User not found');
     }
 
+    if (await this.isUserDisabled(user.id)) {
+      throw new UnauthorizedException('Account disabled');
+    }
+
     return {
       ...user,
       isRoot: this.isRootIdentifier(user.email),
+      isActive: true,
+    };
+  }
+
+  async validateSessionUser(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    if (await this.isUserDisabled(user.id)) {
+      throw new UnauthorizedException('Account disabled');
+    }
+
+    return {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
     };
   }
 
@@ -122,18 +157,13 @@ export class AuthService implements OnModuleInit {
       },
     });
 
-    return {
-      id: user.id,
-      identifier: user.email,
-      displayName: user.displayName,
-      role: user.role,
-      isRoot: this.isRootIdentifier(user.email),
-      createdAt: user.createdAt.toISOString(),
-    };
+    return this.toManagedUserResponse(user, true);
   }
 
   async listManagedUsers(callerEmail: string) {
     await this.assertRootAccess(callerEmail);
+
+    const disabledUserIds = await this.getDisabledUserIdSet();
 
     const users = await this.prisma.user.findMany({
       orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
@@ -147,15 +177,9 @@ export class AuthService implements OnModuleInit {
       },
     });
 
-    return users.map((user) => ({
-      id: user.id,
-      identifier: user.email,
-      displayName: user.displayName,
-      role: user.role,
-      isRoot: this.isRootIdentifier(user.email),
-      createdAt: user.createdAt.toISOString(),
-      updatedAt: user.updatedAt.toISOString(),
-    }));
+    return users.map((user) =>
+      this.toManagedUserResponse(user, !disabledUserIds.has(user.id)),
+    );
   }
 
   async updateManagedUserRole(callerEmail: string, userId: string, role: AppRole) {
@@ -178,14 +202,65 @@ export class AuthService implements OnModuleInit {
       data: { role },
     });
 
+    const disabledUserIds = await this.getDisabledUserIdSet();
+
+    return this.toManagedUserResponse(updated, !disabledUserIds.has(updated.id));
+  }
+
+  async updateManagedUserStatus(callerEmail: string, userId: string, active: boolean) {
+    await this.assertRootAccess(callerEmail);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    if (this.isRootIdentifier(user.email) && !active) {
+      throw new BadRequestException('The root account cannot be deactivated');
+    }
+
+    const disabledUserIds = await this.getDisabledUserIdSet();
+    if (active) {
+      disabledUserIds.delete(user.id);
+    } else {
+      disabledUserIds.add(user.id);
+    }
+
+    await this.setDisabledUserIds(Array.from(disabledUserIds));
+
+    return this.toManagedUserResponse(user, active);
+  }
+
+  async deleteManagedUser(callerEmail: string, userId: string) {
+    await this.assertRootAccess(callerEmail);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    if (this.isRootIdentifier(user.email)) {
+      throw new BadRequestException('The root account cannot be deleted');
+    }
+
+    const disabledUserIds = await this.getDisabledUserIdSet();
+    if (disabledUserIds.has(user.id)) {
+      disabledUserIds.delete(user.id);
+      await this.setDisabledUserIds(Array.from(disabledUserIds));
+    }
+
+    await this.prisma.user.delete({ where: { id: user.id } });
+
     return {
-      id: updated.id,
-      identifier: updated.email,
-      displayName: updated.displayName,
-      role: updated.role,
-      isRoot: this.isRootIdentifier(updated.email),
-      createdAt: updated.createdAt.toISOString(),
-      updatedAt: updated.updatedAt.toISOString(),
+      id: user.id,
+      identifier: user.email,
+      deleted: true,
     };
   }
 
@@ -332,6 +407,10 @@ export class AuthService implements OnModuleInit {
         mappedDisplayName,
         mappedRole,
       );
+
+      if (await this.isUserDisabled(user.id)) {
+        throw new UnauthorizedException('Account disabled');
+      }
 
       return this.buildAuthResponse(user);
     } catch (error) {
@@ -529,6 +608,67 @@ export class AuthService implements OnModuleInit {
       .filter((item) => item.length > 0);
   }
 
+  private async getDisabledUserIdSet(): Promise<Set<string>> {
+    const setting = await this.prisma.systemSetting.findUnique({
+      where: { key: DISABLED_USERS_SETTING_KEY },
+      select: { value: true },
+    });
+
+    if (!setting) {
+      return new Set<string>();
+    }
+
+    const raw = setting.value as unknown;
+    if (!Array.isArray(raw)) {
+      return new Set<string>();
+    }
+
+    return new Set(
+      raw
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0),
+    );
+  }
+
+  private async setDisabledUserIds(userIds: string[]) {
+    const sanitized = Array.from(
+      new Set(userIds.map((item) => item.trim()).filter((item) => item.length > 0)),
+    );
+
+    await this.prisma.systemSetting.upsert({
+      where: { key: DISABLED_USERS_SETTING_KEY },
+      create: {
+        key: DISABLED_USERS_SETTING_KEY,
+        value: sanitized as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        value: sanitized as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  private async isUserDisabled(userId: string): Promise<boolean> {
+    const disabledUserIds = await this.getDisabledUserIdSet();
+    return disabledUserIds.has(userId);
+  }
+
+  private toManagedUserResponse(
+    user: Pick<User, 'id' | 'email' | 'displayName' | 'role' | 'createdAt' | 'updatedAt'>,
+    isActive: boolean,
+  ) {
+    return {
+      id: user.id,
+      identifier: user.email,
+      displayName: user.displayName,
+      role: user.role,
+      isRoot: this.isRootIdentifier(user.email),
+      isActive,
+      createdAt: user.createdAt.toISOString(),
+      updatedAt: user.updatedAt.toISOString(),
+    };
+  }
+
   private normalizeOptionalString(value: unknown): string | undefined {
     if (typeof value !== 'string') {
       return undefined;
@@ -580,6 +720,7 @@ export class AuthService implements OnModuleInit {
         displayName: user.displayName,
         role: user.role,
         isRoot: this.isRootIdentifier(user.email),
+        isActive: true,
         createdAt: user.createdAt.toISOString(),
       },
       accessToken: token,

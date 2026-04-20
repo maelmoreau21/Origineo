@@ -59,12 +59,22 @@ function Sidebar() {
           </svg>
           <span>Recherche</span>
         </a>
+        <a href="/tree-settings" className="nav-link" id="nav-tree-settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2v6"/>
+            <path d="M12 8c-2.5 0-4.5 2-4.5 4.5S9.5 17 12 17s4.5-2 4.5-4.5S14.5 8 12 8z"/>
+            <path d="M7 21h10"/>
+            <path d="M9 17v4"/>
+            <path d="M15 17v4"/>
+          </svg>
+          <span>Paramètres Arbre</span>
+        </a>
         <a href="/admin" className="nav-link" id="nav-admin">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3"/>
             <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
           </svg>
-          <span>Admin</span>
+          <span>Admin App</span>
         </a>
       </div>
 
@@ -165,6 +175,16 @@ function Sidebar() {
           margin-left: 240px;
           flex: 1;
           min-height: 100vh;
+        }
+
+        body.tree-workspace-mode .sidebar {
+          transform: translateX(-100%);
+          opacity: 0;
+          pointer-events: none;
+        }
+
+        body.tree-workspace-mode .main-content {
+          margin-left: 0;
         }
       `}</style>
     </nav>

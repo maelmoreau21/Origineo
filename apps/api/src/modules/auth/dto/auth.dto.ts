@@ -54,6 +54,12 @@ export class UpdateUserRoleDto {
   role: 'ADMIN' | 'VISITOR';
 }
 
+export class UpdateUserStatusDto {
+  @ApiProperty({ default: true, description: 'Set false to deactivate the account, true to reactivate.' })
+  @IsBoolean()
+  active: boolean;
+}
+
 export class LdapConfigDto {
   @ApiProperty({ default: false })
   @IsBoolean()

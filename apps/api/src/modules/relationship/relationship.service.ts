@@ -14,6 +14,37 @@ import { CreateRelationshipDto } from './dto/relationship.dto';
 export class RelationshipService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async findAll(page = 1, limit = 100) {
+    const safePage = Number.isFinite(page)
+      ? Math.max(1, Math.floor(page))
+      : 1;
+    const safeLimit = Number.isFinite(limit)
+      ? Math.min(1000, Math.max(1, Math.floor(limit)))
+      : 100;
+    const skip = (safePage - 1) * safeLimit;
+
+    const [relationships, total] = await this.prisma.$transaction([
+      this.prisma.relationship.findMany({
+        skip,
+        take: safeLimit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          parent: true,
+          child: true,
+        },
+      }),
+      this.prisma.relationship.count(),
+    ]);
+
+    return {
+      data: relationships,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.ceil(total / safeLimit),
+    };
+  }
+
   async create(dto: CreateRelationshipDto) {
     // Prevent self-relationship
     if (dto.parentId === dto.childId) {

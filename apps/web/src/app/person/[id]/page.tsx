@@ -4,11 +4,14 @@
 // Origineo — Person Detail Page
 // ══════════════════════════════════════
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams } from 'next/navigation';
-import { personApi, documentApi } from '@/lib/api';
+import { personApi, unionApi, documentApi } from '@/lib/api';
 
 const CATEGORY_LABELS: Record<string, string> = {
+  BIRTH_CERT: 'Acte de naissance',
+  DEATH_CERT: 'Acte de décès',
+  MARRIAGE_CERT: 'Acte de mariage',
   BIRTH_CERTIFICATE: 'Acte de naissance',
   DEATH_CERTIFICATE: 'Acte de décès',
   MARRIAGE_CERTIFICATE: 'Acte de mariage',
@@ -17,12 +20,80 @@ const CATEGORY_LABELS: Record<string, string> = {
   OTHER: 'Autre',
 };
 
+const UNION_TYPE_LABELS: Record<string, string> = {
+  MARRIAGE: 'Mariage',
+  PACS: 'PACS',
+  PARTNERSHIP: 'Partenariat',
+  OTHER: 'Union',
+};
+
+const UNION_END_REASON_LABELS: Record<string, string> = {
+  DIVORCE: 'Divorce',
+  DEATH: 'Décès',
+  ANNULMENT: 'Annulation',
+  OTHER: 'Autre',
+};
+
+const HISTORY_EVENT_LABELS: Record<string, string> = {
+  PERSON_CREATED: 'Création',
+  PERSON_UPDATED: 'Mise à jour',
+  PERSON_DELETED: 'Suppression',
+  ROOT_CHANGED: 'Changement racine',
+  COMPONENT_CONNECTED: 'Rattachement composant',
+  COMPONENT_REMOVED: 'Suppression composant',
+  PERSON_BRANCH_REMOVED: 'Suppression branche',
+  TREE_CLEARED: 'Arbre vidé',
+};
+
+function formatDateValue(value?: string | null) {
+  if (!value) return null;
+  return new Date(value).toLocaleDateString('fr-FR');
+}
+
+function toDateInputValue(value?: string | null) {
+  if (!value) return '';
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function unionTypeLabel(type?: string | null) {
+  if (!type) return 'Union';
+  return UNION_TYPE_LABELS[type] || type;
+}
+
+function unionEndReasonLabel(reason?: string | null) {
+  if (!reason) return null;
+  return UNION_END_REASON_LABELS[reason] || reason;
+}
+
+function isImageMimeType(mimeType: string) {
+  return mimeType.startsWith('image/');
+}
+
+function roleFromJwt(token: string): string | null {
+  try {
+    const payloadPart = token.split('.')[1];
+    if (!payloadPart) return null;
+
+    const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+    const decoded = atob(padded);
+    const payload = JSON.parse(decoded) as { role?: string };
+
+    return typeof payload.role === 'string' ? payload.role : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function PersonPage() {
   const params = useParams();
   const personId = params?.id as string;
 
   const [person, setPerson] = useState<any>(null);
   const [documents, setDocuments] = useState<any[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
+  const [historyVisible, setHistoryVisible] = useState(false);
+  const [adminMode, setAdminMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,12 +102,19 @@ export default function PersonPage() {
 
     async function load() {
       try {
-        const [personResult, docsResult] = await Promise.all([
+        const token = localStorage.getItem('origineo_token') || undefined;
+        const [personResult, docsResult, historyResult] = await Promise.all([
           personApi.getById(personId),
           documentApi.getByPerson(personId).catch(() => ({ data: [] })),
+          token
+            ? personApi.getHistory(personId, 120, token).catch(() => null)
+            : Promise.resolve(null),
         ]);
         setPerson(personResult.data);
         setDocuments(docsResult.data || []);
+        setHistory(historyResult?.data || []);
+        setHistoryVisible(Boolean(historyResult));
+        setAdminMode(token ? roleFromJwt(token) === 'ADMIN' : false);
       } catch (err: any) {
         setError(err.message || 'Personne introuvable');
       } finally {
@@ -87,7 +165,22 @@ export default function PersonPage() {
       ...u,
       partner: u.partner1,
     })),
-  ];
+  ].sort((a: any, b: any) => {
+    const aStart = a.startDate ? new Date(a.startDate).getTime() : 0;
+    const bStart = b.startDate ? new Date(b.startDate).getTime() : 0;
+    if (bStart !== aStart) {
+      return bStart - aStart;
+    }
+
+    const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return bCreated - aCreated;
+  });
+
+  const refreshPerson = async () => {
+    const result = await personApi.getById(personId);
+    setPerson(result.data);
+  };
 
   return (
     <div style={{ padding: 'var(--space-8)' }} className="animate-fade-in">
@@ -184,23 +277,12 @@ export default function PersonPage() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
                 {unions.map((u: any) => (
-                  <div key={u.id} style={{
-                    padding: 'var(--space-3)',
-                    background: 'var(--color-bg-primary)',
-                    borderRadius: 'var(--radius-lg)',
-                    border: '1px solid var(--color-border-subtle)',
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <PersonLink person={u.partner} />
-                      <span className="badge badge-amber">{u.type}</span>
-                    </div>
-                    {u.startDate && (
-                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', marginTop: 'var(--space-1)' }}>
-                        {new Date(u.startDate).toLocaleDateString('fr-FR')}
-                        {u.startPlace && ` — ${u.startPlace}`}
-                      </div>
-                    )}
-                  </div>
+                  <UnionRecordCard
+                    key={u.id}
+                    union={u}
+                    canManage={adminMode}
+                    onUnionUpdated={refreshPerson}
+                  />
                 ))}
               </div>
             )}
@@ -212,12 +294,428 @@ export default function PersonPage() {
           <DocumentsPanel personId={personId} documents={documents} onUpdate={setDocuments} />
         </div>
 
+        {historyVisible && (
+          <div className="glass-card" style={{ marginTop: 'var(--space-8)' }}>
+            <h3 style={{ marginBottom: 'var(--space-4)', fontSize: 'var(--text-lg)' }}>
+              🕘 Historique des modifications ({history.length})
+            </h3>
+
+            {history.length === 0 ? (
+              <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)' }}>
+                Aucune modification historisée pour cette personne.
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: 'var(--space-2)', maxHeight: 320, overflow: 'auto' }}>
+                {history.map((entry: any) => (
+                  <div key={entry.id} style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md)', padding: 'var(--space-2)', background: 'var(--color-bg-primary)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                      <span className="badge badge-accent">
+                        {HISTORY_EVENT_LABELS[entry.eventType] || entry.eventType}
+                      </span>
+                      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                        {new Date(entry.at).toLocaleString('fr-FR')} · {entry.actor || 'system'}
+                      </span>
+                    </div>
+
+                    {entry.details && (
+                      <pre style={{ marginTop: 'var(--space-2)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--font-mono)' }}>
+                        {JSON.stringify(entry.details, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* UUID */}
         <div style={{ marginTop: 'var(--space-8)', textAlign: 'center' }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
             UUID: {person.id}
           </span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function UnionRecordCard({
+  union,
+  canManage,
+  onUnionUpdated,
+}: {
+  union: any;
+  canManage: boolean;
+  onUnionUpdated: () => Promise<void>;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [loadingDocuments, setLoadingDocuments] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [savingUnion, setSavingUnion] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [category, setCategory] = useState('MARRIAGE_CERTIFICATE');
+  const [description, setDescription] = useState('');
+  const [form, setForm] = useState({
+    type: union.type || 'MARRIAGE',
+    startDate: toDateInputValue(union.startDate),
+    startPlace: union.startPlace || '',
+    endDate: toDateInputValue(union.endDate),
+    endReason: union.endReason || '',
+    notes: union.notes || '',
+  });
+
+  const loadDocuments = useMemo(
+    () => async () => {
+      setLoadingDocuments(true);
+      try {
+        const result = await documentApi.getByUnion(union.id);
+        setDocuments(Array.isArray(result.data) ? result.data : []);
+      } catch {
+        setDocuments([]);
+      } finally {
+        setLoadingDocuments(false);
+      }
+    },
+    [union.id],
+  );
+
+  useEffect(() => {
+    void loadDocuments();
+  }, [loadDocuments]);
+
+  useEffect(() => {
+    setForm({
+      type: union.type || 'MARRIAGE',
+      startDate: toDateInputValue(union.startDate),
+      startPlace: union.startPlace || '',
+      endDate: toDateInputValue(union.endDate),
+      endReason: union.endReason || '',
+      notes: union.notes || '',
+    });
+  }, [
+    union.id,
+    union.type,
+    union.startDate,
+    union.startPlace,
+    union.endDate,
+    union.endReason,
+    union.notes,
+  ]);
+
+  const startDateLabel = formatDateValue(union.startDate);
+  const endDateLabel = formatDateValue(union.endDate);
+  const endReasonLabel = unionEndReasonLabel(union.endReason);
+
+  const eventLine = startDateLabel || union.startPlace
+    ? `${startDateLabel ? `Le ${startDateLabel}` : 'Date inconnue'}${union.startPlace ? ` à ${union.startPlace}` : ''}`
+    : 'Date et lieu non renseignés';
+
+  const endLine = endDateLabel || endReasonLabel
+    ? `${endDateLabel ? `Fin le ${endDateLabel}` : 'Fin sans date précise'}${endReasonLabel ? ` (${endReasonLabel})` : ''}`
+    : null;
+
+  const handleSaveUnion = async () => {
+    const token = localStorage.getItem('origineo_token');
+    if (!token) {
+      alert('Connectez-vous en administrateur pour modifier une union.');
+      return;
+    }
+
+    setSavingUnion(true);
+    try {
+      await unionApi.update(
+        union.id,
+        {
+          type: form.type,
+          startDate: form.startDate || '',
+          startPlace: form.startPlace.trim(),
+          endDate: form.endDate || '',
+          endReason: form.endReason || '',
+          notes: form.notes.trim(),
+        },
+        token,
+      );
+      await onUnionUpdated();
+      setEditing(false);
+    } catch (err: any) {
+      alert(err.message || 'Impossible de mettre à jour l\'union.');
+    } finally {
+      setSavingUnion(false);
+    }
+  };
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const token = localStorage.getItem('origineo_token');
+    if (!token) {
+      alert('Veuillez vous connecter en tant qu\'administrateur pour envoyer des documents de couple.');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      await documentApi.upload(
+        file,
+        {
+          unionId: union.id,
+          category,
+          description: description || undefined,
+        },
+        token,
+      );
+      await loadDocuments();
+      setDescription('');
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de l\'envoi du document de couple.');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDeleteDocument = async (docId: string) => {
+    const token = localStorage.getItem('origineo_token');
+    if (!token) {
+      alert('Veuillez vous connecter en tant qu\'administrateur pour supprimer un document.');
+      return;
+    }
+
+    if (!confirm('Supprimer ce document de couple ?')) {
+      return;
+    }
+
+    try {
+      await documentApi.delete(docId, token);
+      setDocuments((current) => current.filter((doc) => doc.id !== docId));
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de la suppression du document.');
+    }
+  };
+
+  return (
+    <div
+      style={{
+        padding: 'var(--space-3)',
+        background: 'var(--color-bg-primary)',
+        borderRadius: 'var(--radius-lg)',
+        border: '1px solid var(--color-border-subtle)',
+        display: 'grid',
+        gap: 'var(--space-3)',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        <PersonLink person={union.partner} />
+        <span className="badge badge-amber">{unionTypeLabel(union.type)}</span>
+      </div>
+
+      <div style={{ display: 'grid', gap: 'var(--space-1)' }}>
+        <div style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>
+          📍 {eventLine}
+        </div>
+        {endLine && (
+          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+            {endLine}
+          </div>
+        )}
+        {union.notes && !editing && (
+          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)', whiteSpace: 'pre-wrap' }}>
+            📝 {union.notes}
+          </div>
+        )}
+      </div>
+
+      {canManage && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button className="btn btn-ghost" onClick={() => setEditing((current) => !current)}>
+            {editing ? 'Fermer édition union' : 'Modifier date/lieu/notes'}
+          </button>
+        </div>
+      )}
+
+      {editing && (
+        <div style={{ border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)', display: 'grid', gap: 'var(--space-2)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
+            <div className="input-group">
+              <label className="input-label">Type d&apos;union</label>
+              <select className="input" value={form.type} onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}>
+                <option value="MARRIAGE">Mariage</option>
+                <option value="PACS">PACS</option>
+                <option value="PARTNERSHIP">Partenariat</option>
+                <option value="OTHER">Autre</option>
+              </select>
+            </div>
+
+            <div className="input-group">
+              <label className="input-label">Date de l&apos;union</label>
+              <input className="input" type="date" value={form.startDate} onChange={(e) => setForm((prev) => ({ ...prev, startDate: e.target.value }))} />
+            </div>
+          </div>
+
+          <div className="input-group">
+            <label className="input-label">Lieu de l&apos;union</label>
+            <input className="input" value={form.startPlace} onChange={(e) => setForm((prev) => ({ ...prev, startPlace: e.target.value }))} placeholder="Ex: Lille, France" />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
+            <div className="input-group">
+              <label className="input-label">Date de fin</label>
+              <input className="input" type="date" value={form.endDate} onChange={(e) => setForm((prev) => ({ ...prev, endDate: e.target.value }))} />
+            </div>
+            <div className="input-group">
+              <label className="input-label">Raison de fin</label>
+              <select className="input" value={form.endReason} onChange={(e) => setForm((prev) => ({ ...prev, endReason: e.target.value }))}>
+                <option value="">Aucune</option>
+                <option value="DIVORCE">Divorce</option>
+                <option value="DEATH">Décès</option>
+                <option value="ANNULMENT">Annulation</option>
+                <option value="OTHER">Autre</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="input-group">
+            <label className="input-label">Notes de l&apos;union</label>
+            <textarea
+              className="input"
+              style={{ minHeight: 90, resize: 'vertical' }}
+              value={form.notes}
+              onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
+              placeholder="Ex: union religieuse, témoins, registre..."
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)' }}>
+            <button className="btn btn-ghost" onClick={() => setEditing(false)} disabled={savingUnion}>
+              Annuler
+            </button>
+            <button className="btn btn-primary" onClick={handleSaveUnion} disabled={savingUnion}>
+              {savingUnion ? 'Sauvegarde...' : 'Sauvegarder'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ borderTop: '1px solid var(--color-border-subtle)', paddingTop: 'var(--space-3)', display: 'grid', gap: 'var(--space-2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-2)' }}>
+          <h4 style={{ fontSize: 'var(--text-sm)', margin: 0 }}>
+            📎 Documents du couple ({documents.length})
+          </h4>
+          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+            Documents liés aux deux partenaires
+          </span>
+        </div>
+
+        {canManage && (
+          <div style={{
+            padding: 'var(--space-3)',
+            background: 'var(--color-bg-elevated)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--color-border-subtle)',
+          }}>
+            <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div className="input-group" style={{ flex: '1 1 180px' }}>
+                <label className="input-label">Catégorie</label>
+                <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
+                  <option value="MARRIAGE_CERTIFICATE">Acte de mariage</option>
+                  <option value="PHOTO">Photo</option>
+                  <option value="OFFICIAL_DOCUMENT">Document officiel</option>
+                  <option value="OTHER">Autre</option>
+                </select>
+              </div>
+              <div className="input-group" style={{ flex: '2 1 220px' }}>
+                <label className="input-label">Description</label>
+                <input
+                  className="input"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Ex: Acte de mariage de la mairie"
+                />
+              </div>
+              <div>
+                <label className="btn btn-secondary" style={{ cursor: 'pointer', opacity: uploading ? 0.5 : 1 }}>
+                  {uploading ? 'Envoi...' : 'Ajouter document couple'}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,.pdf,.doc,.docx"
+                    onChange={handleUpload}
+                    style={{ display: 'none' }}
+                    disabled={uploading}
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {loadingDocuments ? (
+          <div className="spinner" />
+        ) : documents.length === 0 ? (
+          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+            Aucun document de couple pour cette union.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 'var(--space-2)' }}>
+            {documents.map((doc) => (
+              <div
+                key={doc.id}
+                style={{
+                  background: 'var(--color-bg-elevated)',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--color-border-subtle)',
+                  overflow: 'hidden',
+                }}
+              >
+                {isImageMimeType(doc.mimeType) ? (
+                  <div style={{ width: '100%', height: 110, overflow: 'hidden', background: 'var(--color-bg-tertiary)' }}>
+                    <img
+                      src={documentApi.viewUrl(doc.id)}
+                      alt={doc.filename}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      loading="lazy"
+                    />
+                  </div>
+                ) : (
+                  <div style={{ width: '100%', height: 72, background: 'var(--color-bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem' }}>
+                    📄
+                  </div>
+                )}
+
+                <div style={{ padding: 'var(--space-2)' }}>
+                  <div style={{ fontSize: 'var(--text-xs)', fontWeight: 600, marginBottom: 'var(--space-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {doc.filename}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-1)' }}>
+                    <span className="badge badge-accent" style={{ fontSize: '0.62rem' }}>
+                      {CATEGORY_LABELS[doc.category] || doc.category}
+                    </span>
+                    <a href={documentApi.downloadUrl(doc.id)} className="btn btn-ghost" style={{ fontSize: '0.68rem', padding: '2px 8px' }}>
+                      Télécharger
+                    </a>
+                  </div>
+                  {doc.description && (
+                    <div style={{ fontSize: '0.68rem', color: 'var(--color-text-tertiary)', marginTop: 'var(--space-1)' }}>
+                      {doc.description}
+                    </div>
+                  )}
+                  {canManage && (
+                    <button
+                      className="btn btn-ghost"
+                      style={{ fontSize: '0.68rem', padding: '2px 8px', color: 'var(--color-rose)', marginTop: 'var(--space-1)' }}
+                      onClick={() => handleDeleteDocument(doc.id)}
+                    >
+                      Supprimer
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -280,14 +778,11 @@ function DocumentsPanel({
     }
   };
 
-  const isImage = (mimeType: string) =>
-    mimeType.startsWith('image/');
-
   return (
     <div className="glass-card" id="documents-panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
         <h3 style={{ fontSize: 'var(--text-lg)' }}>
-          📎 Documents ({documents.length})
+          📎 Documents individuels ({documents.length})
         </h3>
       </div>
 
@@ -357,7 +852,7 @@ function DocumentsPanel({
               transition: 'all var(--transition-base)',
             }}>
               {/* Preview */}
-              {isImage(doc.mimeType) ? (
+              {isImageMimeType(doc.mimeType) ? (
                 <div style={{
                   width: '100%',
                   height: 160,

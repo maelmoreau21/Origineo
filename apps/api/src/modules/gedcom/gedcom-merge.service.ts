@@ -14,6 +14,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PersonService } from '../person/person.service';
 
 /**
  * Represents a person parsed from a GEDCOM file,
@@ -67,6 +68,23 @@ export interface DuplicateCandidate {
   confidence: number;
   /** Details of what matched */
   matchReasons: string[];
+  /** Alternative matches sorted by confidence */
+  candidates?: Array<{
+    existingPersonId: string;
+    confidence: number;
+    matchReasons: string[];
+    existingPerson: {
+      id: string;
+      givenNames: string;
+      usageSurname: string | null;
+      birthSurname: string | null;
+      gender: string;
+      birthDate: Date | null;
+      birthPlace: string | null;
+      deathDate: Date | null;
+      deathPlace: string | null;
+    };
+  }>;
 }
 
 /**
@@ -100,6 +118,24 @@ export interface MergeResult {
   personsSkipped: number;
   relationshipsCreated: number;
   unionsCreated: number;
+  integrityAlert?: {
+    type: string;
+    message: string;
+    before: {
+      totalPersons: number;
+      connectedComponents: number;
+      disconnectedComponents: number;
+      isolatedPersons: number;
+      mainComponentSize: number;
+    };
+    after: {
+      totalPersons: number;
+      connectedComponents: number;
+      disconnectedComponents: number;
+      isolatedPersons: number;
+      mainComponentSize: number;
+    };
+  } | null;
 }
 
 // In-memory sessions store (TTL'd)
@@ -124,7 +160,10 @@ export class GedcomMergeService {
   private static readonly MERGE_TRANSACTION_MAX_WAIT_MS = 10_000;
   private static readonly MERGE_TRANSACTION_TIMEOUT_MS = 600_000;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly personService: PersonService,
+  ) {}
 
   // ═══════════════════════════════════════
   // STEP 1: Analyze — Parse file + detect duplicates
@@ -208,9 +247,16 @@ export class GedcomMergeService {
       const candidates = this.findDuplicateCandidates(staged, allExistingPersons);
 
       if (candidates.length > 0) {
-        // Take the best match (highest confidence)
         const best = candidates[0];
-        duplicates.push(best);
+        duplicates.push({
+          ...best,
+          candidates: candidates.map((candidate) => ({
+            existingPersonId: candidate.existingPersonId,
+            confidence: candidate.confidence,
+            matchReasons: candidate.matchReasons,
+            existingPerson: candidate.existingPerson,
+          })),
+        });
       } else {
         newPersons.push(staged);
       }
@@ -244,6 +290,8 @@ export class GedcomMergeService {
     sessionId: string,
     decisions: MergeDecision[],
   ): Promise<MergeResult> {
+    const beforeConnectivity = await this.personService.getConnectivitySnapshot();
+
     const session = mergeSessions.get(sessionId);
     if (!session) {
       throw new NotFoundException(
@@ -456,8 +504,28 @@ export class GedcomMergeService {
     // Clean up session
     mergeSessions.delete(sessionId);
 
+    const afterConnectivity = await this.personService.getConnectivitySnapshot();
+    const disconnectedDelta =
+      afterConnectivity.disconnectedComponents - beforeConnectivity.disconnectedComponents;
+    const isolatedDelta =
+      afterConnectivity.isolatedPersons - beforeConnectivity.isolatedPersons;
+
+    const integrityAlert = disconnectedDelta > 0 || isolatedDelta > 0
+      ? {
+          type: 'MERGE_CONNECTIVITY_ALERT',
+          message:
+            `${disconnectedDelta > 0 ? `${disconnectedDelta} composant(s) déconnecté(s) créé(s). ` : ''}` +
+            `${isolatedDelta > 0 ? `${isolatedDelta} personne(s) isolée(s) créée(s).` : ''}`,
+          before: beforeConnectivity,
+          after: afterConnectivity,
+        }
+      : null;
+
     this.logger.log(`Merge applied: ${JSON.stringify(result)}`);
-    return result;
+    return {
+      ...result,
+      integrityAlert,
+    };
   }
 
   // ═══════════════════════════════════════

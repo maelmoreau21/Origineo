@@ -14,7 +14,6 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ReactFlow,
   Background,
-  Controls,
   MiniMap,
   useNodesState,
   useEdgesState,
@@ -24,6 +23,7 @@ import {
   type Edge,
   type Connection,
   BackgroundVariant,
+  Position,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
@@ -180,6 +180,13 @@ type FamilySummary = {
   partnerId: string;
   partnerName: string;
   children: Array<{ id: string; name: string }>;
+};
+
+type CouplePair = {
+  key: string;
+  partner1Id: string;
+  partner2Id: string;
+  unionType?: string;
 };
 
 function buildPairKey(idA: string, idB: string) {
@@ -339,6 +346,13 @@ function TreeFlow() {
   );
   const showSelectionPanel = Boolean(selectedPerson) && !wideTreeMode && !presentationMode;
 
+  useEffect(() => {
+    document.body.classList.add('tree-workspace-mode');
+    return () => {
+      document.body.classList.remove('tree-workspace-mode');
+    };
+  }, []);
+
   const childUnionOptions = useMemo<ChildUnionOption[]>(() => {
     if (!selectedPersonId) return [];
 
@@ -471,11 +485,7 @@ function TreeFlow() {
       setControlsVisible(false);
       return;
     }
-
-    controlsHideTimerRef.current = setTimeout(() => {
-      setControlsVisible(false);
-    }, menusCompact ? 3500 : 4500);
-  }, [clearControlsHideTimer, menusCompact, presentationMode]);
+  }, [clearControlsHideTimer, presentationMode]);
 
   const makeOperationId = useCallback((prefix: string) => {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1189,87 +1199,109 @@ function TreeFlow() {
         parentsByChild.set(rel.childId, list);
       });
 
-      const unionByPair = new Map<string, TreeUnion>();
-      unions.forEach((union) => {
-        unionByPair.set(buildPairKey(union.partner1Id, union.partner2Id), union);
-      });
-
-      const shouldShowCoparentLabels = flowNodes.length <= 80;
-
-      // Parent-child edges
-      const relationshipEdges: Edge[] = relationships.map((rel) => {
-        const allParents = parentsByChild.get(rel.childId) || [];
-        const coParentId = allParents.find((parentId) => parentId !== rel.parentId);
-
-        let edgeColor = 'var(--color-border)';
-        if (coParentId) {
-          const pairKey = buildPairKey(rel.parentId, coParentId);
-          const knownUnion = unionByPair.get(pairKey);
-          if (knownUnion) {
-            edgeColor = colorFromSeed(pairKey);
-          }
-        }
-
-        const coParentName = coParentId
-          ? personDisplayName(normalizedPersonMap[coParentId])
-          : '';
-        const edgeLabel = shouldShowCoparentLabels && coParentName
-          ? `avec ${coParentName.length > 22 ? `${coParentName.slice(0, 22)}…` : coParentName}`
-          : undefined;
-
-        return {
-          id: rel.id,
+      const relationshipEdgesForLayout: Edge[] = relationships
+        .filter((rel) => Boolean(normalizedPersonMap[rel.parentId]) && Boolean(normalizedPersonMap[rel.childId]))
+        .map((rel) => ({
+          id: `layout-${rel.id}`,
           source: rel.parentId,
           target: rel.childId,
           type: 'smoothstep',
-          animated: false,
-          style: {
-            stroke: edgeColor,
-            strokeWidth: coParentId ? 2.8 : 2,
-            opacity: coParentId ? 0.95 : 0.82,
-          },
-          label: edgeLabel,
-          labelStyle: {
-            fontSize: 10,
-            fontWeight: 600,
-            fill: 'var(--color-text-secondary)',
-          },
-          labelBgStyle: {
-            fill: 'hsla(225, 24%, 12%, 0.82)',
-            stroke: 'var(--color-border-subtle)',
-            strokeWidth: 1,
-          },
-          labelBgPadding: [4, 2],
-          labelBgBorderRadius: 6,
-          markerEnd: {
-            type: 'arrowclosed' as any,
-            color: edgeColor,
-            width: 16,
-            height: 16,
-          },
+        }));
+
+      const couplePairs = new Map<string, CouplePair>();
+      const registerCouplePair = (
+        partnerAId: string,
+        partnerBId: string,
+        unionType?: string,
+      ) => {
+        if (!partnerAId || !partnerBId || partnerAId === partnerBId) {
+          return null;
+        }
+
+        const key = buildPairKey(partnerAId, partnerBId);
+        const existing = couplePairs.get(key);
+        if (existing) {
+          if (!existing.unionType && unionType) {
+            existing.unionType = unionType;
+          }
+          return existing;
+        }
+
+        const [partner1Id, partner2Id] =
+          partnerAId < partnerBId
+            ? [partnerAId, partnerBId]
+            : [partnerBId, partnerAId];
+
+        const pair: CouplePair = {
+          key,
+          partner1Id,
+          partner2Id,
+          unionType,
         };
+
+        couplePairs.set(key, pair);
+        return pair;
+      };
+
+      unions.forEach((union) => {
+        registerCouplePair(union.partner1Id, union.partner2Id, union.type);
       });
 
-      // Partner edges (visual only, not used in dagre layout to keep generations stable)
-      const unionEdges: Edge[] = unions.map((union) => {
-        const pairColor = colorFromSeed(buildPairKey(union.partner1Id, union.partner2Id));
+      const childrenByPair = new Map<string, string[]>();
+      parentsByChild.forEach((parentIds, childId) => {
+        const uniqueParents = Array.from(new Set(parentIds)).filter((parentId) =>
+          Boolean(normalizedPersonMap[parentId]),
+        );
+
+        if (uniqueParents.length !== 2) {
+          return;
+        }
+
+        const pair = registerCouplePair(uniqueParents[0], uniqueParents[1]);
+        if (!pair) {
+          return;
+        }
+
+        const children = childrenByPair.get(pair.key) || [];
+        if (!children.includes(childId)) {
+          children.push(childId);
+          childrenByPair.set(pair.key, children);
+        }
+      });
+
+      // Apply dagre layout
+      const { nodes: layoutedNodes } = getLayoutedElements(flowNodes, relationshipEdgesForLayout);
+      const nodeById = new Map(layoutedNodes.map((node) => [node.id, node]));
+
+      const midpointNodes: Node[] = [];
+      const midpointByPairKey = new Map<string, string>();
+      const coupleEdges: Edge[] = [];
+
+      couplePairs.forEach((pair) => {
+        const partner1Node = nodeById.get(pair.partner1Id);
+        const partner2Node = nodeById.get(pair.partner2Id);
+        if (!partner1Node || !partner2Node) {
+          return;
+        }
+
+        const pairColor = colorFromSeed(pair.key);
         const pairShadow = pairColor.replace('hsl(', 'hsla(').replace(')', ', 0.30)');
 
-        return {
-          id: `union-${union.id}`,
-          source: union.partner1Id,
-          target: union.partner2Id,
-          type: 'smoothstep',
+        coupleEdges.push({
+          id: `couple-${pair.key}`,
+          source: pair.partner1Id,
+          target: pair.partner2Id,
+          type: 'straight',
           animated: false,
           style: {
             stroke: pairColor,
-            strokeWidth: 3,
-            opacity: 0.95,
+            strokeWidth: 3.2,
+            opacity: 0.96,
             filter: `drop-shadow(0 0 5px ${pairShadow})`,
           },
-          label: '⚭',
+          label: childrenByPair.has(pair.key) ? undefined : '⚭',
           labelStyle: {
-            fontSize: 16,
+            fontSize: 15,
             fontWeight: 700,
             fill: pairColor,
           },
@@ -1277,23 +1309,98 @@ function TreeFlow() {
             fill: 'hsla(225, 24%, 12%, 0.88)',
             stroke: pairColor,
             strokeWidth: 1,
-            rx: 10,
-            ry: 10,
           },
           labelBgPadding: [4, 2],
           labelBgBorderRadius: 8,
           data: {
-            unionType: union.type,
+            unionType: pair.unionType,
           },
-        };
+        });
+
+        const center1X = partner1Node.position.x + NODE_WIDTH / 2;
+        const center1Y = partner1Node.position.y + NODE_HEIGHT / 2;
+        const center2X = partner2Node.position.x + NODE_WIDTH / 2;
+        const center2Y = partner2Node.position.y + NODE_HEIGHT / 2;
+        const midpointX = (center1X + center2X) / 2;
+        const midpointY = (center1Y + center2Y) / 2;
+        const midpointNodeId = `pair-midpoint-${pair.key}`;
+
+        midpointByPairKey.set(pair.key, midpointNodeId);
+        midpointNodes.push({
+          id: midpointNodeId,
+          type: 'default',
+          data: { kind: 'midpoint', pairKey: pair.key },
+          position: {
+            x: midpointX - 1,
+            y: midpointY - 1,
+          },
+          width: 2,
+          height: 2,
+          sourcePosition: Position.Bottom,
+          targetPosition: Position.Top,
+          draggable: false,
+          selectable: false,
+          connectable: false,
+          deletable: false,
+          hidden: true,
+          style: {
+            width: 2,
+            height: 2,
+            opacity: 0,
+            border: 'none',
+            background: 'transparent',
+            pointerEvents: 'none',
+          },
+        });
       });
 
-      // Apply dagre layout
-      const { nodes: layoutedNodes, edges: layoutedEdges } =
-        getLayoutedElements(flowNodes, relationshipEdges);
+      const renderedChildEdges: Edge[] = [];
+      const linkedChildrenFromPair = new Set<string>();
 
-      setNodes(layoutedNodes);
-      setEdges([...layoutedEdges, ...unionEdges]);
+      relationships.forEach((rel) => {
+        const parentIds = Array.from(new Set(parentsByChild.get(rel.childId) || []));
+
+        if (parentIds.length === 2) {
+          const pairKey = buildPairKey(parentIds[0], parentIds[1]);
+          const midpointNodeId = midpointByPairKey.get(pairKey);
+          const childLinkId = `${pairKey}|${rel.childId}`;
+
+          if (midpointNodeId && !linkedChildrenFromPair.has(childLinkId)) {
+            linkedChildrenFromPair.add(childLinkId);
+            const pairColor = colorFromSeed(pairKey);
+
+            renderedChildEdges.push({
+              id: `children-${pairKey}-${rel.childId}`,
+              source: midpointNodeId,
+              target: rel.childId,
+              type: 'smoothstep',
+              animated: false,
+              style: {
+                stroke: pairColor,
+                strokeWidth: 2.8,
+                opacity: 0.95,
+              },
+            });
+            return;
+          }
+        }
+
+        renderedChildEdges.push({
+          id: `relationship-${rel.id}`,
+          source: rel.parentId,
+          target: rel.childId,
+          type: 'smoothstep',
+          animated: false,
+          style: {
+            stroke: 'var(--color-border)',
+            strokeWidth: 2,
+            opacity: 0.84,
+          },
+        });
+      });
+
+      setNodes([...layoutedNodes, ...midpointNodes]);
+      setEdges([...coupleEdges, ...renderedChildEdges]);
       setNodeCount(layoutedNodes.length);
 
       if (!selectedPersonId) {
@@ -1553,6 +1660,7 @@ function TreeFlow() {
       const lines = [headers.map(toCsvCell).join(';')];
 
       const rows = nodes
+        .filter((node) => node.type === 'person')
         .map((node) => {
           const person = normalizePerson((node.data as any).person);
           const generation = (node.data as any).generation ?? 0;
@@ -2135,32 +2243,18 @@ function TreeFlow() {
   }, []);
 
   const onWorkspaceMouseMove = useCallback(() => {
-    if (presentationMode) return;
-
-    const now = Date.now();
-    if (now - lastWorkspaceMoveRef.current < 120) return;
-    lastWorkspaceMoveRef.current = now;
-
-    if (!controlsVisible) {
-      setControlsVisible(true);
-    }
-    scheduleControlsHide();
-  }, [controlsVisible, presentationMode, scheduleControlsHide]);
+    // Left workspace menu is manually shown/hidden by the user.
+  }, []);
 
   const onToolbarEnter = useCallback(() => {
     if (presentationMode) return;
-    setControlsVisible(true);
-    clearControlsHideTimer();
-  }, [clearControlsHideTimer, presentationMode]);
+  }, [presentationMode]);
 
   const onToolbarLeave = useCallback(() => {
     if (presentationMode) return;
-    scheduleControlsHide();
-  }, [presentationMode, scheduleControlsHide]);
+  }, [presentationMode]);
 
-  const overlayTopOffset = !presentationMode && controlsVisible && controlsBarHeight > 0
-    ? `calc(var(--space-3) + ${controlsBarHeight + 8}px)`
-    : 'var(--space-3)';
+  const overlayTopOffset = 'var(--space-3)';
 
   return (
     <div
@@ -2172,7 +2266,6 @@ function TreeFlow() {
     >
       <div
         style={{ height: '100vh', display: 'flex', flexDirection: 'column', minWidth: 0, position: 'relative' }}
-        onMouseMove={onWorkspaceMouseMove}
       >
         {/* ─── Controls Bar ──────────────────── */}
         <div
@@ -2185,128 +2278,162 @@ function TreeFlow() {
           onMouseEnter={onToolbarEnter}
           onMouseLeave={onToolbarLeave}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-            <h1 style={{ fontSize: 'var(--text-lg)', fontWeight: 700 }}>
-              🌳 Arbre Généalogique
-            </h1>
-            {!presentationMode && nodeCount > 0 && (
-              <span className="badge badge-accent" style={{ fontSize: '0.7rem' }}>
-                {nodeCount} personne{nodeCount > 1 ? 's' : ''}
-              </span>
-            )}
-            {!presentationMode && isAdmin && (
-              <span className="badge badge-emerald" style={{ fontSize: '0.7rem' }}>
-                Édition active
-              </span>
-            )}
-            {!presentationMode && wideTreeMode && selectedPerson && (
-              <span className="badge badge-amber" style={{ fontSize: '0.7rem' }}>
-                Panneau sélection masqué
-              </span>
-            )}
-          </div>
-
-          <div style={{ display: 'flex', gap: 'var(--space-4)', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <button
-              className="btn btn-ghost"
-              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-              onClick={() => setMenusCompact((value) => !value)}
-            >
-              {menusCompact ? 'Plus d\'options' : 'Menus discrets'}
-            </button>
-
-            <button
-              className="btn btn-ghost"
-              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-              onClick={() => setPresentationMode((value) => !value)}
-            >
-              {presentationMode ? 'Quitter présentation' : 'Présentation'}
-            </button>
-
-            {selectedPersonId && (
-              <button
-                className="btn btn-ghost"
-                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                onClick={focusOnSelected}
-              >
-                Focus sélection
-              </button>
-            )}
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-1)' }}>
-              <button
-                className="btn btn-ghost"
-                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                onClick={quickZoomOut}
-                title="Raccourci clavier: -"
-              >
-                Zoom -
-              </button>
-              <button
-                className="btn btn-ghost"
-                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                onClick={quickZoomIn}
-                title="Raccourci clavier: +"
-              >
-                Zoom +
-              </button>
-              <button
-                className="btn btn-ghost"
-                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                onClick={zoomToGlobalView}
-                title="Raccourci clavier: G"
-              >
-                Vue globale
-              </button>
+          <div className="tree-controls-header">
+            <div style={{ display: 'grid', gap: 'var(--space-1)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                <h1 style={{ fontSize: 'var(--text-lg)', fontWeight: 700 }}>
+                  🌳 Espace Arbre
+                </h1>
+                {!presentationMode && nodeCount > 0 && (
+                  <span className="badge badge-accent" style={{ fontSize: '0.7rem' }}>
+                    {nodeCount} personne{nodeCount > 1 ? 's' : ''}
+                  </span>
+                )}
+                {!presentationMode && isAdmin && (
+                  <span className="badge badge-emerald" style={{ fontSize: '0.7rem' }}>
+                    Édition active
+                  </span>
+                )}
+                {!presentationMode && wideTreeMode && selectedPerson && (
+                  <span className="badge badge-amber" style={{ fontSize: '0.7rem' }}>
+                    Panneau sélection masqué
+                  </span>
+                )}
+              </div>
+              <p className="tree-controls-subtitle">
+                Tout ce qu&apos;il faut pour naviguer, éditer et exporter sans quitter la vue arbre.
+              </p>
             </div>
 
             <button
               className="btn btn-ghost"
-              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-              onClick={() => setWideTreeMode((value) => !value)}
+              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}
+              onClick={() => setControlsVisible(false)}
             >
-              {wideTreeMode ? 'Afficher le panneau' : 'Arbre en grand'}
+              Fermer
             </button>
+          </div>
 
-            <button
-              className="btn btn-ghost"
-              style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-              onClick={exportVisibleTableCsv}
-              disabled={Boolean(exportBusy)}
-            >
-              {exportBusy === 'CSV_VISIBLE' ? 'Export...' : 'Excel vue'}
-            </button>
+          <div className="tree-controls-links">
+            <a href="/" className="btn btn-secondary" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}>
+              Arbre
+            </a>
+            <a href="/search" className="btn btn-ghost" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}>
+              Recherche
+            </a>
+            <a href="/admin" className="btn btn-ghost" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}>
+              Administration
+            </a>
+          </div>
 
-            {isAdmin && selectedPersonId && (
-              <button
-                className="btn btn-secondary"
-                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                onClick={setCurrentAsDefaultRoot}
-                disabled={actionBusy}
-              >
-                Racine par défaut
-              </button>
-            )}
+          <div className="tree-controls-scroll">
+            <section className="tree-controls-section">
+              <h2 className="tree-section-title">Recherche</h2>
+              <div style={{ position: 'relative', width: '100%', minWidth: 0 }}>
+                <input
+                  className="input"
+                  id="focus-person-input"
+                  placeholder="Recentrer l'arbre sur une personne..."
+                  value={focusQuery}
+                  onChange={(e) => {
+                    setFocusQuery(e.target.value);
+                    setShowFocusResults(true);
+                  }}
+                  onFocus={() => setShowFocusResults(true)}
+                />
+                {showFocusResults && (focusLoading || focusResults.length > 0) && (
+                  <div style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    left: 0,
+                    right: 0,
+                    zIndex: 30,
+                    background: 'var(--color-bg-secondary)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-lg)',
+                    boxShadow: 'var(--shadow-lg)',
+                    overflow: 'hidden',
+                  }}>
+                    {focusLoading && (
+                      <div style={{ padding: 'var(--space-3)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+                        Recherche en cours...
+                      </div>
+                    )}
+                    {!focusLoading && focusResults.map((person) => (
+                      <button
+                        key={person.id}
+                        className="btn btn-ghost"
+                        style={{
+                          width: '100%',
+                          justifyContent: 'flex-start',
+                          borderRadius: 0,
+                          padding: 'var(--space-3)',
+                          borderBottom: '1px solid var(--color-border-subtle)',
+                        }}
+                        onClick={() => changeRootFromSearch(person)}
+                      >
+                        {personDisplayName(person)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-            {isAdmin && (
-              <button
-                className="btn btn-primary"
-                style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                onClick={openStandaloneCreate}
-              >
-                + Nouvelle personne
-              </button>
-            )}
+              <div className="tree-controls-row">
+                {selectedPersonId && (
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                    onClick={focusOnSelected}
+                  >
+                    Focus sélection
+                  </button>
+                )}
 
-            {!menusCompact && (
-              <>
-                <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-                  <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                    Ancêtres:
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                  onClick={zoomToGlobalView}
+                  title="Raccourci clavier: G"
+                >
+                  Vue globale
+                </button>
+
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                  onClick={quickZoomOut}
+                  title="Raccourci clavier: -"
+                >
+                  Zoom -
+                </button>
+
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                  onClick={quickZoomIn}
+                  title="Raccourci clavier: +"
+                >
+                  Zoom +
+                </button>
+              </div>
+
+              {error && (
+                <button className="btn btn-ghost" onClick={loadTree} style={{ fontSize: 'var(--text-xs)' }}>
+                  🔄 Réessayer
+                </button>
+              )}
+            </section>
+
+            <section className="tree-controls-section">
+              <h2 className="tree-section-title">Affichage de l&apos;arbre</h2>
+              <div className="tree-controls-grid">
+                <div className="input-group tree-input-group">
+                  <label className="input-label" htmlFor="select-ancestor-generations">
+                    Ancêtres
                   </label>
                   <select
                     className="input"
-                    style={{ width: 70, padding: 'var(--space-2)' }}
                     value={ancestorGens}
                     onChange={(e) => setAncestorGens(Number(e.target.value))}
                     id="select-ancestor-generations"
@@ -2317,13 +2444,12 @@ function TreeFlow() {
                   </select>
                 </div>
 
-                <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-                  <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                    Descendants:
+                <div className="input-group tree-input-group">
+                  <label className="input-label" htmlFor="select-descendant-generations">
+                    Descendants
                   </label>
                   <select
                     className="input"
-                    style={{ width: 70, padding: 'var(--space-2)' }}
                     value={descendantGens}
                     onChange={(e) => setDescendantGens(Number(e.target.value))}
                     id="select-descendant-generations"
@@ -2334,13 +2460,12 @@ function TreeFlow() {
                   </select>
                 </div>
 
-                <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-                  <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                    Navigation:
+                <div className="input-group tree-input-group">
+                  <label className="input-label" htmlFor="select-navigation-mode">
+                    Navigation
                   </label>
                   <select
                     className="input"
-                    style={{ width: 115, padding: 'var(--space-2)' }}
                     value={focusModeEnabled ? 'FOCUS' : 'EXPANDED'}
                     onChange={(e) => setFocusModeEnabled(e.target.value === 'FOCUS')}
                     id="select-navigation-mode"
@@ -2350,13 +2475,12 @@ function TreeFlow() {
                   </select>
                 </div>
 
-                <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-                  <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                    Glisser-relier:
+                <div className="input-group tree-input-group">
+                  <label className="input-label" htmlFor="select-drag-link-mode">
+                    Glisser-relier
                   </label>
                   <select
                     className="input"
-                    style={{ width: 130, padding: 'var(--space-2)' }}
                     value={dragLinkType}
                     onChange={(e) => setDragLinkType(e.target.value as DragLinkType)}
                     id="select-drag-link-mode"
@@ -2367,15 +2491,15 @@ function TreeFlow() {
                 </div>
 
                 {dragLinkType === 'PARENT_CHILD' ? (
-                  <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                      Type:
+                  <div className="input-group tree-input-group">
+                    <label className="input-label" htmlFor="select-relationship-type">
+                      Type de lien
                     </label>
                     <select
                       className="input"
-                      style={{ width: 120, padding: 'var(--space-2)' }}
                       value={relationshipType}
                       onChange={(e) => setRelationshipType(e.target.value)}
+                      id="select-relationship-type"
                     >
                       <option value="BIOLOGICAL">Bio</option>
                       <option value="ADOPTIVE">Adoptive</option>
@@ -2383,15 +2507,15 @@ function TreeFlow() {
                     </select>
                   </div>
                 ) : (
-                  <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    <label className="input-label" style={{ whiteSpace: 'nowrap' }}>
-                      Union:
+                  <div className="input-group tree-input-group">
+                    <label className="input-label" htmlFor="select-union-type">
+                      Type d&apos;union
                     </label>
                     <select
                       className="input"
-                      style={{ width: 120, padding: 'var(--space-2)' }}
                       value={unionType}
                       onChange={(e) => setUnionType(e.target.value)}
+                      id="select-union-type"
                     >
                       <option value="MARRIAGE">Mariage</option>
                       <option value="PACS">PACS</option>
@@ -2400,118 +2524,130 @@ function TreeFlow() {
                     </select>
                   </div>
                 )}
+              </div>
 
+              <div className="tree-controls-row">
                 <button
                   className="btn btn-ghost"
                   style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                  disabled={!canUndo || actionBusy}
-                  onClick={undoLastAction}
+                  onClick={() => setMenusCompact((value) => !value)}
                 >
-                  Annuler
+                  {menusCompact ? 'Mode complet' : 'Mode simplifié'}
                 </button>
 
                 <button
                   className="btn btn-ghost"
                   style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                  disabled={!canRedo || actionBusy}
-                  onClick={redoLastAction}
+                  onClick={() => setWideTreeMode((value) => !value)}
                 >
-                  Rétablir
+                  {wideTreeMode ? 'Afficher le panneau' : 'Arbre en grand'}
                 </button>
 
                 <button
                   className="btn btn-ghost"
                   style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                  onClick={exportVisibleAsPng}
-                  disabled={Boolean(exportBusy)}
+                  onClick={() => setPresentationMode((value) => !value)}
                 >
-                  {exportBusy === 'PNG' ? 'Export PNG...' : 'Export PNG'}
+                  {presentationMode ? 'Quitter présentation' : 'Présentation'}
                 </button>
+              </div>
+            </section>
 
-                <button
-                  className="btn btn-ghost"
-                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                  onClick={exportVisibleAsPdf}
-                  disabled={Boolean(exportBusy)}
-                >
-                  {exportBusy === 'PDF' ? 'Export PDF...' : 'Export PDF'}
-                </button>
-
-                <button
-                  className="btn btn-ghost"
-                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                  onClick={exportVisibleTableCsv}
-                  disabled={Boolean(exportBusy)}
-                >
-                  {exportBusy === 'CSV_VISIBLE' ? 'Export CSV...' : 'CSV vue (Excel)'}
-                </button>
-
-                <button
-                  className="btn btn-ghost"
-                  style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
-                  onClick={exportSelectedBranchCsv}
-                  disabled={Boolean(exportBusy)}
-                >
-                  {exportBusy === 'CSV_BRANCH' ? 'Export branche...' : 'CSV branche'}
-                </button>
-              </>
-            )}
-
-            <div style={{ position: 'relative', minWidth: menusCompact ? 220 : 260, flex: menusCompact ? '1 1 260px' : undefined }}>
-              <input
-                className="input"
-                id="focus-person-input"
-                placeholder="Recentrer l'arbre sur une personne..."
-                value={focusQuery}
-                onChange={(e) => {
-                  setFocusQuery(e.target.value);
-                  setShowFocusResults(true);
-                }}
-                onFocus={() => setShowFocusResults(true)}
-              />
-              {showFocusResults && (focusLoading || focusResults.length > 0) && (
-                <div style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 4px)',
-                  left: 0,
-                  right: 0,
-                  zIndex: 30,
-                  background: 'var(--color-bg-secondary)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--radius-lg)',
-                  boxShadow: 'var(--shadow-lg)',
-                  overflow: 'hidden',
-                }}>
-                  {focusLoading && (
-                    <div style={{ padding: 'var(--space-3)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                      Recherche en cours...
-                    </div>
-                  )}
-                  {!focusLoading && focusResults.map((person) => (
+            {isAdmin && (
+              <section className="tree-controls-section">
+                <h2 className="tree-section-title">Actions admin</h2>
+                <div className="tree-controls-row">
+                  {selectedPersonId && (
                     <button
-                      key={person.id}
-                      className="btn btn-ghost"
-                      style={{
-                        width: '100%',
-                        justifyContent: 'flex-start',
-                        borderRadius: 0,
-                        padding: 'var(--space-3)',
-                        borderBottom: '1px solid var(--color-border-subtle)',
-                      }}
-                      onClick={() => changeRootFromSearch(person)}
+                      className="btn btn-secondary"
+                      style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                      onClick={setCurrentAsDefaultRoot}
+                      disabled={actionBusy}
                     >
-                      {personDisplayName(person)}
+                      Racine par défaut
                     </button>
-                  ))}
-                </div>
-              )}
-            </div>
+                  )}
 
-            {error && (
-              <button className="btn btn-ghost" onClick={loadTree} style={{ fontSize: 'var(--text-xs)' }}>
-                🔄 Réessayer
-              </button>
+                  <button
+                    className="btn btn-primary"
+                    style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                    onClick={openStandaloneCreate}
+                  >
+                    + Nouvelle personne
+                  </button>
+                </div>
+              </section>
             )}
+
+            {!menusCompact && (
+              <section className="tree-controls-section">
+                <h2 className="tree-section-title">Historique et exports</h2>
+                <div className="tree-controls-row">
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                    disabled={!canUndo || actionBusy}
+                    onClick={undoLastAction}
+                  >
+                    Annuler
+                  </button>
+
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                    disabled={!canRedo || actionBusy}
+                    onClick={redoLastAction}
+                  >
+                    Rétablir
+                  </button>
+                </div>
+
+                <div className="tree-controls-row">
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                    onClick={exportVisibleAsPng}
+                    disabled={Boolean(exportBusy)}
+                  >
+                    {exportBusy === 'PNG' ? 'Export PNG...' : 'Export PNG'}
+                  </button>
+
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                    onClick={exportVisibleAsPdf}
+                    disabled={Boolean(exportBusy)}
+                  >
+                    {exportBusy === 'PDF' ? 'Export PDF...' : 'Export PDF'}
+                  </button>
+
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                    onClick={exportVisibleTableCsv}
+                    disabled={Boolean(exportBusy)}
+                  >
+                    {exportBusy === 'CSV_VISIBLE' ? 'Export CSV...' : 'CSV vue (Excel)'}
+                  </button>
+
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-2) var(--space-3)' }}
+                    onClick={exportSelectedBranchCsv}
+                    disabled={Boolean(exportBusy)}
+                  >
+                    {exportBusy === 'CSV_BRANCH' ? 'Export branche...' : 'CSV branche'}
+                  </button>
+                </div>
+              </section>
+            )}
+
+            <details className="tree-controls-help">
+              <summary>Raccourcis clavier</summary>
+              <p>
+                Clic: sélectionner · Double-clic: recentrer · F: focus · +/-: zoom rapide · G: vue globale · W: largeur · M: menu
+              </p>
+            </details>
           </div>
 
           <style>{`
@@ -2519,50 +2655,178 @@ function TreeFlow() {
               position: absolute;
               top: var(--space-3);
               left: var(--space-3);
-              right: var(--space-3);
+              bottom: var(--space-3);
+              width: min(440px, calc(100% - 2 * var(--space-3)));
               z-index: 15;
+              display: flex;
+              flex-direction: column;
+              align-items: stretch;
+              justify-content: flex-start;
+              padding: 0;
+              background: linear-gradient(170deg, hsla(220, 20%, 16%, 0.92), hsla(225, 18%, 12%, 0.92));
+              border: 1px solid var(--color-border);
+              border-radius: var(--radius-xl);
+              box-shadow: var(--shadow-lg);
+              backdrop-filter: blur(14px);
+              overflow: hidden;
+              transition: opacity var(--transition-fast), transform var(--transition-fast);
+            }
+
+            .tree-controls-header {
               display: flex;
               align-items: flex-start;
               justify-content: space-between;
-              padding: var(--space-2) var(--space-3);
-              background: var(--color-surface-glass);
-              border: 1px solid var(--color-border);
-              border-radius: var(--radius-lg);
-              box-shadow: var(--shadow-md);
-              backdrop-filter: blur(12px);
               gap: var(--space-3);
+              padding: var(--space-4) var(--space-4) var(--space-3);
+              border-bottom: 1px solid var(--color-border-subtle);
+              background: hsla(0, 0%, 100%, 0.02);
+            }
+
+            .tree-controls-subtitle {
+              margin: 0;
+              color: var(--color-text-secondary);
+              font-size: var(--text-xs);
+            }
+
+            .tree-controls-links {
+              display: flex;
+              align-items: center;
               flex-wrap: wrap;
-              transition: opacity var(--transition-fast), transform var(--transition-fast);
+              gap: var(--space-2);
+              padding: 0 var(--space-4) var(--space-3);
+              border-bottom: 1px solid var(--color-border-subtle);
+            }
+
+            .tree-controls-scroll {
+              flex: 1;
+              overflow-y: auto;
+              display: grid;
+              gap: var(--space-3);
+              padding: var(--space-4);
+            }
+
+            .tree-controls-section {
+              display: grid;
+              gap: var(--space-2);
+              padding: var(--space-3);
+              border: 1px solid var(--color-border-subtle);
+              border-radius: var(--radius-lg);
+              background: hsla(0, 0%, 100%, 0.02);
+            }
+
+            .tree-section-title {
+              margin: 0;
+              font-size: var(--text-sm);
+              font-weight: 700;
+              color: var(--color-text-primary);
+            }
+
+            .tree-controls-row {
+              display: flex;
+              align-items: center;
+              flex-wrap: wrap;
+              gap: var(--space-2);
+            }
+
+            .tree-controls-grid {
+              display: grid;
+              gap: var(--space-2);
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .tree-input-group {
+              gap: var(--space-1);
+            }
+
+            .tree-input-group .input {
+              padding: var(--space-2);
+            }
+
+            .tree-controls-help {
+              margin: 0;
+              padding: var(--space-3);
+              border: 1px dashed var(--color-border-subtle);
+              border-radius: var(--radius-lg);
+              background: hsla(0, 0%, 100%, 0.015);
+            }
+
+            .tree-controls-help summary {
+              cursor: pointer;
+              font-size: var(--text-xs);
+              font-weight: 700;
+              color: var(--color-text-secondary);
+            }
+
+            .tree-controls-help p {
+              margin: var(--space-2) 0 0;
+              font-size: var(--text-xs);
+              color: var(--color-text-muted);
+              line-height: 1.5;
             }
 
             .tree-controls select {
               background: var(--color-bg-tertiary);
             }
 
-            .tree-controls[data-compact='true'] {
-              gap: var(--space-2);
+            .tree-controls[data-compact='true'] .tree-controls-section {
+              padding: var(--space-2);
             }
 
             .tree-controls[data-visible='false'] {
               opacity: 0;
-              transform: translateY(-10px);
+              transform: translateX(-14px);
               pointer-events: none;
             }
 
             .tree-controls[data-presentation='true'] {
               opacity: 0;
-              transform: translateY(-12px);
+              transform: translateX(-14px);
               pointer-events: none;
             }
 
             @media (max-width: 1200px) {
               .tree-controls {
                 left: var(--space-2);
+                top: var(--space-2);
+                bottom: var(--space-2);
+                width: min(410px, calc(100% - 2 * var(--space-2)));
+              }
+            }
+
+            @media (max-width: 900px) {
+              .tree-controls {
+                left: var(--space-2);
                 right: var(--space-2);
+                width: auto;
+                max-height: calc(100vh - 2 * var(--space-2));
+              }
+
+              .tree-controls-header {
+                flex-direction: column;
+                align-items: stretch;
+              }
+
+              .tree-controls-grid {
+                grid-template-columns: 1fr;
               }
             }
           `}</style>
         </div>
+
+        {!presentationMode && !controlsVisible && (
+          <button
+            className="btn btn-primary"
+            style={{
+              position: 'absolute',
+              top: 'var(--space-3)',
+              left: 'var(--space-3)',
+              zIndex: 16,
+            }}
+            onClick={() => setControlsVisible(true)}
+          >
+            Ouvrir menu arbre
+          </button>
+        )}
 
         {/* ─── Tree Canvas ───────────────────── */}
         <div ref={treeCanvasRef} style={{ flex: 1, position: 'relative' }}>
@@ -2692,7 +2956,6 @@ function TreeFlow() {
             }}
           >
             <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="hsla(225, 15%, 25%, 0.3)" />
-            {!presentationMode && <Controls position="bottom-left" />}
             {!presentationMode && (
               <MiniMap
                 position="bottom-right"
@@ -2708,26 +2971,6 @@ function TreeFlow() {
               />
             )}
           </ReactFlow>
-        )}
-
-        {/* Keyboard shortcuts hint */}
-        {!loading && !error && nodes.length > 0 && !presentationMode && (
-          <div style={{
-            position: 'absolute',
-            bottom: 'var(--space-3)',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            fontSize: 'var(--text-xs)',
-            color: 'var(--color-text-muted)',
-            background: 'var(--color-surface-glass)',
-            backdropFilter: 'blur(8px)',
-            padding: 'var(--space-1) var(--space-3)',
-            borderRadius: 'var(--radius-full)',
-            border: '1px solid var(--color-border-subtle)',
-            pointerEvents: 'none',
-          }}>
-            Clic → sélectionner · Double-clic → recentrer · F → focus · +/- → zoom rapide · G → vue globale · W → largeur · M → menus
-          </div>
         )}
 
         {presentationMode && (

@@ -7,6 +7,7 @@ import {
   Controller,
   Get,
   Post,
+  Request,
   Body,
   Patch,
   Param,
@@ -18,7 +19,10 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { PersonService } from './person.service';
 import { CreatePersonDto, UpdatePersonDto } from './dto/person.dto';
-import { ConnectDisconnectedComponentDto } from './dto/tree-integrity.dto';
+import {
+  ConnectDisconnectedComponentDto,
+  UpdateQualityRulesDto,
+} from './dto/tree-integrity.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -33,10 +37,10 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a new person' })
-  async create(@Body() dto: CreatePersonDto) {
+  async create(@Request() req: any, @Body() dto: CreatePersonDto) {
     return {
       success: true,
-      data: await this.personService.create(dto),
+      data: await this.personService.create(dto, req.user?.email),
     };
   }
 
@@ -78,15 +82,85 @@ export class PersonController {
     };
   }
 
+  @Get('integrity/rules')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get tree quality rules' })
+  async getQualityRules() {
+    return {
+      success: true,
+      data: await this.personService.getQualityRules(),
+    };
+  }
+
+  @Post('integrity/rules')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update tree quality rules' })
+  async updateQualityRules(@Request() req: any, @Body() dto: UpdateQualityRulesDto) {
+    return {
+      success: true,
+      data: await this.personService.updateQualityRules(dto, req.user?.email),
+    };
+  }
+
+  @Get('integrity/logs')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List tree repair logs' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getRepairLogs(@Query('limit') limit?: string) {
+    const parsedLimit = this.parsePositiveInt(limit, 40, 500);
+    return {
+      success: true,
+      data: await this.personService.getRepairLogs(parsedLimit),
+    };
+  }
+
+  @Post('integrity/logs/:id/undo')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Undo a repair log entry if reversible' })
+  @ApiQuery({ name: 'simulate', required: false, type: Boolean })
+  async undoRepairLog(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Query('simulate') simulate?: string,
+  ) {
+    const shouldSimulate = simulate === undefined
+      ? false
+      : this.parseBooleanQuery(simulate, 'simulate');
+
+    return {
+      success: true,
+      data: await this.personService.undoRepairLog(id, req.user?.email, shouldSimulate),
+    };
+  }
+
   @Post('integrity/repair-root')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Re-assign default root to main connected component' })
-  async repairRootDefault() {
+  @ApiQuery({ name: 'simulate', required: false, type: Boolean })
+  async repairRootDefault(
+    @Request() req: any,
+    @Query('simulate') simulate?: string,
+  ) {
+    const shouldSimulate = simulate === undefined
+      ? false
+      : this.parseBooleanQuery(simulate, 'simulate');
+
     return {
       success: true,
-      data: await this.personService.repairRootDefaultToMainComponent(),
+      data: await this.personService.repairRootDefaultToMainComponent({
+        simulate: shouldSimulate,
+        actor: req.user?.email,
+      }),
     };
   }
 
@@ -95,10 +169,13 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Connect a disconnected component to main component' })
-  async connectComponent(@Body() dto: ConnectDisconnectedComponentDto) {
+  async connectComponent(@Request() req: any, @Body() dto: ConnectDisconnectedComponentDto) {
     return {
       success: true,
-      data: await this.personService.connectDisconnectedComponent(dto),
+      data: await this.personService.connectDisconnectedComponent({
+        ...dto,
+        actor: req.user?.email,
+      }),
     };
   }
 
@@ -113,9 +190,12 @@ export class PersonController {
     type: String,
     description: 'Safety confirmation token. Must be DELETE_COMPONENT.',
   })
+  @ApiQuery({ name: 'simulate', required: false, type: Boolean })
   async removeDisconnectedComponent(
+    @Request() req: any,
     @Param('personId', ParseUUIDPipe) personId: string,
     @Query('confirm') confirm?: string,
+    @Query('simulate') simulate?: string,
   ) {
     if (confirm !== 'DELETE_COMPONENT') {
       throw new BadRequestException(
@@ -123,10 +203,34 @@ export class PersonController {
       );
     }
 
+    const shouldSimulate = simulate === undefined
+      ? false
+      : this.parseBooleanQuery(simulate, 'simulate');
+
     return {
       success: true,
-      data: await this.personService.removeDisconnectedComponent(personId),
+      data: await this.personService.removeDisconnectedComponent(personId, {
+        simulate: shouldSimulate,
+        actor: req.user?.email,
+      }),
       message: 'Disconnected component deleted successfully',
+    };
+  }
+
+  @Get(':id/history')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get person modification history' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getPersonHistory(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = this.parsePositiveInt(limit, 120, 500);
+    return {
+      success: true,
+      data: await this.personService.getPersonHistory(id, parsedLimit),
     };
   }
 
@@ -145,12 +249,13 @@ export class PersonController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a person' })
   async update(
+    @Request() req: any,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdatePersonDto,
   ) {
     return {
       success: true,
-      data: await this.personService.update(id, dto),
+      data: await this.personService.update(id, dto, req.user?.email),
     };
   }
 
@@ -161,6 +266,7 @@ export class PersonController {
   @ApiOperation({ summary: 'Delete a branch from a person (descendants + optional root person)' })
   @ApiQuery({ name: 'includeRoot', required: false, type: Boolean, description: 'true by default. If false, keeps selected person and deletes descendants only.' })
   async removeBranch(
+    @Request() req: any,
     @Param('id', ParseUUIDPipe) id: string,
     @Query('includeRoot') includeRoot?: string,
   ) {
@@ -170,7 +276,7 @@ export class PersonController {
 
     return {
       success: true,
-      data: await this.personService.removeBranch(id, shouldIncludeRoot),
+      data: await this.personService.removeBranch(id, shouldIncludeRoot, req.user?.email),
       message: shouldIncludeRoot
         ? 'Branch deleted successfully'
         : 'Descendants deleted successfully',
@@ -188,14 +294,14 @@ export class PersonController {
     type: String,
     description: 'Safety confirmation token. Must be DELETE_ALL.',
   })
-  async removeAll(@Query('confirm') confirm?: string) {
+  async removeAll(@Request() req: any, @Query('confirm') confirm?: string) {
     if (confirm !== 'DELETE_ALL') {
       throw new BadRequestException('Missing confirmation token. Use confirm=DELETE_ALL.');
     }
 
     return {
       success: true,
-      data: await this.personService.removeAll(),
+      data: await this.personService.removeAll(req.user?.email),
       message: 'Tree deleted successfully',
     };
   }
@@ -205,8 +311,8 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a person' })
-  async remove(@Param('id', ParseUUIDPipe) id: string) {
-    await this.personService.remove(id);
+  async remove(@Request() req: any, @Param('id', ParseUUIDPipe) id: string) {
+    await this.personService.remove(id, req.user?.email);
     return { success: true, message: 'Person deleted successfully' };
   }
 

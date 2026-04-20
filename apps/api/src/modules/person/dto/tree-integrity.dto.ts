@@ -3,7 +3,7 @@
 // ══════════════════════════════════════
 
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsUUID, Max, Min } from 'class-validator';
 
 enum IntegrityLinkMode {
   PARENT_OF_COMPONENT = 'PARENT_OF_COMPONENT',
@@ -61,4 +61,37 @@ export class ConnectDisconnectedComponentDto {
   @IsOptional()
   @IsEnum(IntegrityUnionType)
   unionType?: IntegrityUnionType;
+
+  @ApiPropertyOptional({
+    description: 'If true, only simulate without writing changes to database.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  simulate?: boolean;
+}
+
+export class UpdateQualityRulesDto {
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  requireParentKnown?: boolean;
+
+  @ApiPropertyOptional({ default: 12, minimum: 10, maximum: 35 })
+  @IsOptional()
+  @Min(10)
+  @Max(35)
+  minBiologicalParentAge?: number;
+
+  @ApiPropertyOptional({ default: 80, minimum: 40, maximum: 120 })
+  @IsOptional()
+  @Min(40)
+  @Max(120)
+  maxBiologicalParentAge?: number;
+
+  @ApiPropertyOptional({ default: 120, minimum: 60, maximum: 140 })
+  @IsOptional()
+  @Min(60)
+  @Max(140)
+  maxLifespanYears?: number;
 }

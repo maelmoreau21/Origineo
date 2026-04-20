@@ -77,7 +77,7 @@ Origineo/
 │       │   ├── app/                     # App Router
 │       │   │   ├── layout.tsx           # Layout + Sidebar Navigation
 │       │   │   ├── page.tsx             # Arbre (React Flow + Dagre)
-│       │   │   ├── search/page.tsx      # Recherche fuzzy
+│       │   │   ├── search/page.tsx      # Recherche multi-critères (texte, dates, lieu, genre)
 │       │   │   ├── person/[id]/page.tsx # Fiche personne
 │       │   │   └── admin/page.tsx       # Panel admin
 │       │   ├── components/tree/         # PersonNode (custom node)
@@ -195,7 +195,7 @@ Origineo/
 
 ### 4.3 Stratégie de Requêtes
 - **Chargement d'arbre** : CTE récursives avec limite de profondeur
-- **Recherche** : Opérateur `%` (similarity) + `ILIKE` via pg_trgm
+- **Recherche** : Opérateur `%` (similarity) + `ILIKE` via pg_trgm, avec filtres SQL combinables (dates de naissance/décès, lieu, genre)
 - **Calcul de parenté** : BFS bidirectionnel avec limite de profondeur 20
 
 ### 4.4 Système de Stockage Fichiers
@@ -251,7 +251,7 @@ Origineo/
 ### Search
 | Méthode | Route | Auth | Description |
 |---|---|---|---|
-| GET | /api/search?q=... | Public | Recherche fuzzy |
+| GET | /api/search | Public | Recherche multi-critères (`q`, `place`, `gender`, `birthDateFrom`, `birthDateTo`, `deathDateFrom`, `deathDateTo`, `page`, `limit`) |
 
 ### GEDCOM
 | Méthode | Route | Auth | Description |
@@ -345,7 +345,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 - Frontend Next.js 15 avec arbre interactif (React Flow + Dagre)
 - Auth JWT + rôles (ADMIN/VISITOR)
 - GEDCOM import/export basique
-- Recherche fuzzy pg_trgm
+- Recherche fuzzy pg_trgm + filtres avancés (dates, lieu, genre)
 
 ### Phase 2 ✅ (Stockage & Fusion)
 - **DocumentModule** : Upload, téléchargement, visualisation inline, suppression

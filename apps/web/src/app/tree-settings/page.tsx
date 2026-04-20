@@ -1,7 +1,7 @@
 'use client';
 
 // ══════════════════════════════════════
-// Origineo — Admin Panel (Phase 2)
+// Origineo — Tree Settings Workspace
 // ══════════════════════════════════════
 
 import { useState, useEffect, useCallback } from 'react';
@@ -14,9 +14,9 @@ import {
   unionApi,
 } from '@/lib/api';
 
-type Tab = 'settings' | 'accounts' | 'login';
+type Tab = 'people' | 'gedcom' | 'maintenance' | 'login';
 
-export default function AdminPage() {
+export default function TreeSettingsPage() {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<Tab>('login');
@@ -43,7 +43,7 @@ export default function AdminPage() {
       }
 
       setUser(profile);
-      setActiveTab('accounts');
+      setActiveTab('people');
     }).catch(() => {
       if (!isMounted) return;
       localStorage.removeItem('origineo_token');
@@ -74,7 +74,7 @@ export default function AdminPage() {
         return;
       }
 
-      setActiveTab('accounts');
+      setActiveTab('people');
     } catch (err: any) {
       alert(err.message || 'Échec de la connexion');
     }
@@ -93,7 +93,7 @@ export default function AdminPage() {
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-8)' }}>
           <div>
-            <h1>⚙️ Administration de l&apos;application</h1>
+            <h1>🌳 Paramètres de l&apos;arbre</h1>
             {user && (
               <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginTop: 'var(--space-1)' }}>
                 Connecté en tant que <strong>{user.displayName || user.email}</strong>
@@ -103,9 +103,12 @@ export default function AdminPage() {
             )}
           </div>
           {user && (
-            <button className="btn btn-ghost" onClick={handleLogout} id="logout-button">
-              Déconnexion
-            </button>
+            <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+              <a href="/admin" className="btn btn-ghost">Paramètres application</a>
+              <button className="btn btn-ghost" onClick={handleLogout} id="logout-button">
+                Déconnexion
+              </button>
+            </div>
           )}
         </div>
 
@@ -135,8 +138,9 @@ export default function AdminPage() {
             <div style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-6)', borderBottom: '1px solid var(--color-border)', paddingBottom: 'var(--space-2)' }}>
               {(
                 [
-                { key: 'settings', label: '⚙️ Paramètres' },
-                { key: 'accounts', label: '👤 Comptes' },
+                { key: 'people', label: '👥 Données personnes' },
+                { key: 'gedcom', label: '📂 GEDCOM' },
+                { key: 'maintenance', label: '🛠️ Intégrité & suppression' },
               ] as { key: Tab; label: string }[]
               ).map(({ key, label }) => (
                 <button
@@ -150,18 +154,9 @@ export default function AdminPage() {
               ))}
             </div>
 
-            <div className="glass-card" style={{ marginBottom: 'var(--space-6)' }}>
-              <h3 style={{ marginBottom: 'var(--space-2)' }}>🌳 Paramètres de l&apos;arbre déplacés</h3>
-              <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
-                Toute la gestion de l&apos;arbre (import/export GED, fusion, suppressions, intégrité) est désormais dans un espace dédié.
-              </p>
-              <a href="/tree-settings" className="btn btn-secondary">
-                Ouvrir les paramètres de l&apos;arbre
-              </a>
-            </div>
-
-            {activeTab === 'settings' && <SettingsPanel token={token} isRootUser={isRootUser} />}
-            {activeTab === 'accounts' && <AccountsPagePanel token={token} isRootUser={isRootUser} />}
+            {activeTab === 'people' && <PeoplePanel token={token} />}
+            {activeTab === 'gedcom' && <GedcomSectionPanel token={token} />}
+            {activeTab === 'maintenance' && <MaintenancePanel token={token} />}
           </>
         )}
       </div>
@@ -259,38 +254,49 @@ function AccountsPagePanel({ token, isRootUser }: { token: string; isRootUser: b
   return <AccountsPanel token={token} mode="accounts" />;
 }
 
-function DataPanel({ token }: { token: string }) {
+function PeoplePanel({ token }: { token: string }) {
   return (
     <div style={{ display: 'grid', gap: 'var(--space-6)' }}>
       <div className="glass-card">
-        <h3 style={{ marginBottom: 'var(--space-2)' }}>🗂️ Gestion des données</h3>
+        <h3 style={{ marginBottom: 'var(--space-2)' }}>👥 Gestion des personnes</h3>
         <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
-          Cette section centralise l&apos;ajout de personnes, le rechargement de la liste, les imports/exports GEDCOM, la réparation de l&apos;intégrité de l&apos;arbre et les opérations de nettoyage.
+          Ajout, consultation et suppression des personnes ou branches.
         </p>
       </div>
 
       <PersonsList token={token} />
       <AddPersonForm token={token} />
-      <GedcomPanel token={token} />
-      <TreeRepairPanel token={token} />
-      <TreeDangerZone token={token} />
     </div>
   );
 }
 
-function TreeWorkspacePanel() {
+function GedcomSectionPanel({ token }: { token: string }) {
   return (
     <div style={{ display: 'grid', gap: 'var(--space-6)' }}>
-      <div className="glass-card" style={{ maxWidth: 860 }}>
-        <h3 style={{ marginBottom: 'var(--space-3)' }}>🌳 Espace arbre</h3>
-        <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
-          Ouvrez l&apos;espace arbre interactif pour naviguer, relier les personnes, gérer les unions, et supprimer une branche depuis une personne sélectionnée.
+      <div className="glass-card">
+        <h3 style={{ marginBottom: 'var(--space-2)' }}>📂 GEDCOM</h3>
+        <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
+          Import simple, fusion avancée, export GEDCOM et export XLSX.
         </p>
-        <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-          <a href="/" className="btn btn-primary">Ouvrir l&apos;arbre</a>
-          <a href="/search" className="btn btn-secondary">Aller à la recherche</a>
-        </div>
       </div>
+
+      <GedcomPanel token={token} />
+    </div>
+  );
+}
+
+function MaintenancePanel({ token }: { token: string }) {
+  return (
+    <div style={{ display: 'grid', gap: 'var(--space-6)' }}>
+      <div className="glass-card">
+        <h3 style={{ marginBottom: 'var(--space-2)' }}>🛠️ Intégrité et nettoyage</h3>
+        <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
+          Réparation de l&apos;arbre, rattachement de composants déconnectés et actions de suppression globale.
+        </p>
+      </div>
+
+      <TreeRepairPanel token={token} />
+      <TreeDangerZone token={token} />
     </div>
   );
 }

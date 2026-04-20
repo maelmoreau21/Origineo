@@ -4,6 +4,7 @@
 
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PersonService } from '../person/person.service';
 
 /**
  * GEDCOM Service handles importing and exporting genealogy data
@@ -18,7 +19,10 @@ export class GedcomService {
   private static readonly IMPORT_TRANSACTION_MAX_WAIT_MS = 10_000;
   private static readonly IMPORT_TRANSACTION_TIMEOUT_MS = 600_000;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly personService: PersonService,
+  ) {}
 
   /**
    * Import a GEDCOM file into the database.
@@ -26,6 +30,8 @@ export class GedcomService {
    */
   async importGedcom(fileBuffer: Buffer, filename: string) {
     this.logger.log(`Importing GEDCOM file: ${filename}`);
+
+    const beforeConnectivity = await this.personService.getConnectivitySnapshot();
 
     try {
       // Dynamic import of read-gedcom (ESM module)
@@ -171,8 +177,29 @@ export class GedcomService {
         timeout: GedcomService.IMPORT_TRANSACTION_TIMEOUT_MS,
       });
 
+      const afterConnectivity = await this.personService.getConnectivitySnapshot();
+
+      const disconnectedDelta =
+        afterConnectivity.disconnectedComponents - beforeConnectivity.disconnectedComponents;
+      const isolatedDelta =
+        afterConnectivity.isolatedPersons - beforeConnectivity.isolatedPersons;
+
+      const integrityAlert = disconnectedDelta > 0 || isolatedDelta > 0
+        ? {
+            type: 'IMPORT_CONNECTIVITY_ALERT',
+            message:
+              `${disconnectedDelta > 0 ? `${disconnectedDelta} composant(s) déconnecté(s) créé(s). ` : ''}` +
+              `${isolatedDelta > 0 ? `${isolatedDelta} personne(s) isolée(s) créée(s).` : ''}`,
+            before: beforeConnectivity,
+            after: afterConnectivity,
+          }
+        : null;
+
       this.logger.log(`GEDCOM import complete: ${JSON.stringify(stats)}`);
-      return stats;
+      return {
+        ...stats,
+        integrityAlert,
+      };
     } catch (error) {
       this.logger.error(`GEDCOM import failed: ${error}`);
       throw new BadRequestException(
