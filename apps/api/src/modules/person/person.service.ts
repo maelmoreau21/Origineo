@@ -98,6 +98,8 @@ const PERSON_HISTORY_LOGS_KEY = 'PERSON_HISTORY_LOGS';
 const DEFAULT_ACTOR = 'system';
 const MAX_REPAIR_LOGS = 200;
 const MAX_PERSON_HISTORY_LOGS = 5000;
+const INTERACTIVE_TRANSACTION_MAX_WAIT_MS = 10_000;
+const INTERACTIVE_TRANSACTION_TIMEOUT_MS = 600_000;
 
 type IntegrityPersonSummary = {
   id: string;
@@ -412,11 +414,17 @@ export class PersonService {
       ],
     };
 
-    const [documentsDeleted, personsDeleted] = await this.prisma.$transaction(async (tx) => {
-      const documentsResult = await tx.document.deleteMany({ where: documentsDeleteWhere });
-      const personsResult = await tx.person.deleteMany({ where: { id: { in: targetIds } } });
-      return [documentsResult.count, personsResult.count] as const;
-    });
+    const [documentsDeleted, personsDeleted] = await this.prisma.$transaction(
+      async (tx) => {
+        const documentsResult = await tx.document.deleteMany({ where: documentsDeleteWhere });
+        const personsResult = await tx.person.deleteMany({ where: { id: { in: targetIds } } });
+        return [documentsResult.count, personsResult.count] as const;
+      },
+      {
+        maxWait: INTERACTIVE_TRANSACTION_MAX_WAIT_MS,
+        timeout: INTERACTIVE_TRANSACTION_TIMEOUT_MS,
+      },
+    );
 
     await this.ensureRootDefaultExists();
 
@@ -462,11 +470,17 @@ export class PersonService {
       };
     }
 
-    const [documentsDeleted, personsDeleted] = await this.prisma.$transaction(async (tx) => {
-      const documentsResult = await tx.document.deleteMany({});
-      const personsResult = await tx.person.deleteMany({});
-      return [documentsResult.count, personsResult.count] as const;
-    });
+    const [documentsDeleted, personsDeleted] = await this.prisma.$transaction(
+      async (tx) => {
+        const documentsResult = await tx.document.deleteMany({});
+        const personsResult = await tx.person.deleteMany({});
+        return [documentsResult.count, personsResult.count] as const;
+      },
+      {
+        maxWait: INTERACTIVE_TRANSACTION_MAX_WAIT_MS,
+        timeout: INTERACTIVE_TRANSACTION_TIMEOUT_MS,
+      },
+    );
 
     await this.appendPersonHistory([
       {
@@ -749,19 +763,25 @@ export class PersonService {
         };
       }
 
-      await this.prisma.$transaction(async (tx) => {
-        await tx.person.updateMany({
-          where: { isRootDefault: true },
-          data: { isRootDefault: false },
-        });
-
-        if (previousRootIds.length > 0) {
+      await this.prisma.$transaction(
+        async (tx) => {
           await tx.person.updateMany({
-            where: { id: { in: previousRootIds } },
-            data: { isRootDefault: true },
+            where: { isRootDefault: true },
+            data: { isRootDefault: false },
           });
-        }
-      });
+
+          if (previousRootIds.length > 0) {
+            await tx.person.updateMany({
+              where: { id: { in: previousRootIds } },
+              data: { isRootDefault: true },
+            });
+          }
+        },
+        {
+          maxWait: INTERACTIVE_TRANSACTION_MAX_WAIT_MS,
+          timeout: INTERACTIVE_TRANSACTION_TIMEOUT_MS,
+        },
+      );
 
       await this.ensureRootDefaultExists();
 
@@ -1245,13 +1265,19 @@ export class PersonService {
       };
     }
 
-    const [documentsDeleted, personsDeleted] = await this.prisma.$transaction(async (tx) => {
-      const documentsResult = await tx.document.deleteMany({
-        where: deletionPlan.documentsDeleteWhere,
-      });
-      const personsResult = await tx.person.deleteMany({ where: { id: { in: targetIds } } });
-      return [documentsResult.count, personsResult.count] as const;
-    });
+    const [documentsDeleted, personsDeleted] = await this.prisma.$transaction(
+      async (tx) => {
+        const documentsResult = await tx.document.deleteMany({
+          where: deletionPlan.documentsDeleteWhere,
+        });
+        const personsResult = await tx.person.deleteMany({ where: { id: { in: targetIds } } });
+        return [documentsResult.count, personsResult.count] as const;
+      },
+      {
+        maxWait: INTERACTIVE_TRANSACTION_MAX_WAIT_MS,
+        timeout: INTERACTIVE_TRANSACTION_TIMEOUT_MS,
+      },
+    );
 
     await this.ensureRootDefaultExists();
 

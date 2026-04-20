@@ -14,11 +14,14 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ReactFlow,
   Background,
+  BaseEdge,
+  EdgeLabelRenderer,
   MiniMap,
   useNodesState,
   useEdgesState,
   useReactFlow,
   ReactFlowProvider,
+  type EdgeProps,
   type Node,
   type Edge,
   type Connection,
@@ -41,6 +44,73 @@ import PersonNode from '@/components/tree/PersonNode';
 
 const NODE_WIDTH = 220;
 const NODE_HEIGHT = 120;
+const COUPLE_LINK_MARGIN = 24;
+const CHILD_ORTHOGONAL_PRE_TARGET_GAP = 20;
+
+function CoupleHorizontalEdge({
+  id,
+  sourceX,
+  targetX,
+  sourceY,
+  targetY,
+  style,
+  markerEnd,
+  label,
+  data,
+}: EdgeProps) {
+  const coupleY = typeof data?.coupleY === 'number'
+    ? data.coupleY
+    : Math.max(sourceY, targetY) + COUPLE_LINK_MARGIN;
+  const labelText = typeof label === 'string' || typeof label === 'number' ? label : null;
+  const labelX = (sourceX + targetX) / 2;
+
+  const path = `M ${sourceX},${coupleY} L ${targetX},${coupleY}`;
+
+  return (
+    <>
+      <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />
+      {labelText !== null && (
+        <EdgeLabelRenderer>
+          <div
+            className="nodrag nopan"
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${coupleY}px)`,
+              pointerEvents: 'none',
+              fontSize: 15,
+              fontWeight: 700,
+              lineHeight: 1,
+              color: typeof style?.stroke === 'string' ? style.stroke : 'currentColor',
+              background: 'hsla(225, 24%, 12%, 0.88)',
+              border: `1px solid ${typeof style?.stroke === 'string' ? style.stroke : 'transparent'}`,
+              borderRadius: 8,
+              padding: '2px 6px',
+            }}
+          >
+            {labelText}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
+function OrthogonalDescendantEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  style,
+  markerEnd,
+  data,
+}: EdgeProps) {
+  const startY = typeof data?.sourceCoupleY === 'number' ? data.sourceCoupleY : sourceY;
+  const preTargetY = Math.max(startY + 12, targetY - CHILD_ORTHOGONAL_PRE_TARGET_GAP);
+  const path = `M ${sourceX},${startY} L ${sourceX},${preTargetY} L ${targetX},${preTargetY} L ${targetX},${targetY}`;
+
+  return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
+}
 
 // ─── Dagre Layout ───────────────────────────
 function getLayoutedElements(
@@ -79,6 +149,11 @@ function getLayoutedElements(
 // ─── Custom Node Types ──────────────────────
 const nodeTypes = {
   person: PersonNode,
+};
+
+const edgeTypes = {
+  coupleHorizontal: CoupleHorizontalEdge,
+  orthogonalDescendant: OrthogonalDescendantEdge,
 };
 
 type TreePerson = {
@@ -1275,6 +1350,7 @@ function TreeFlow() {
 
       const midpointNodes: Node[] = [];
       const midpointByPairKey = new Map<string, string>();
+      const coupleYByPairKey = new Map<string, number>();
       const coupleEdges: Edge[] = [];
 
       couplePairs.forEach((pair) => {
@@ -1286,12 +1362,14 @@ function TreeFlow() {
 
         const pairColor = colorFromSeed(pair.key);
         const pairShadow = pairColor.replace('hsl(', 'hsla(').replace(')', ', 0.30)');
+        const coupleY = Math.max(partner1Node.position.y, partner2Node.position.y) + NODE_HEIGHT + COUPLE_LINK_MARGIN;
+        coupleYByPairKey.set(pair.key, coupleY);
 
         coupleEdges.push({
           id: `couple-${pair.key}`,
           source: pair.partner1Id,
           target: pair.partner2Id,
-          type: 'straight',
+          type: 'coupleHorizontal',
           animated: false,
           style: {
             stroke: pairColor,
@@ -1314,15 +1392,13 @@ function TreeFlow() {
           labelBgBorderRadius: 8,
           data: {
             unionType: pair.unionType,
+            coupleY,
           },
         });
 
         const center1X = partner1Node.position.x + NODE_WIDTH / 2;
-        const center1Y = partner1Node.position.y + NODE_HEIGHT / 2;
         const center2X = partner2Node.position.x + NODE_WIDTH / 2;
-        const center2Y = partner2Node.position.y + NODE_HEIGHT / 2;
         const midpointX = (center1X + center2X) / 2;
-        const midpointY = (center1Y + center2Y) / 2;
         const midpointNodeId = `pair-midpoint-${pair.key}`;
 
         midpointByPairKey.set(pair.key, midpointNodeId);
@@ -1332,7 +1408,7 @@ function TreeFlow() {
           data: { kind: 'midpoint', pairKey: pair.key },
           position: {
             x: midpointX - 1,
-            y: midpointY - 1,
+            y: coupleY - 1,
           },
           width: 2,
           height: 2,
@@ -1368,17 +1444,21 @@ function TreeFlow() {
           if (midpointNodeId && !linkedChildrenFromPair.has(childLinkId)) {
             linkedChildrenFromPair.add(childLinkId);
             const pairColor = colorFromSeed(pairKey);
+            const sourceCoupleY = coupleYByPairKey.get(pairKey);
 
             renderedChildEdges.push({
               id: `children-${pairKey}-${rel.childId}`,
               source: midpointNodeId,
               target: rel.childId,
-              type: 'smoothstep',
+              type: 'orthogonalDescendant',
               animated: false,
               style: {
                 stroke: pairColor,
                 strokeWidth: 2.8,
                 opacity: 0.95,
+              },
+              data: {
+                sourceCoupleY,
               },
             });
             return;
@@ -2315,15 +2395,17 @@ function TreeFlow() {
           </div>
 
           <div className="tree-controls-links">
-            <a href="/" className="btn btn-secondary" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}>
-              Arbre
-            </a>
             <a href="/search" className="btn btn-ghost" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}>
-              Recherche
+              Recherche avancée
             </a>
-            <a href="/admin" className="btn btn-ghost" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}>
-              Administration
+            <a href="/tree-settings" className="btn btn-ghost" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}>
+              Paramètres arbre
             </a>
+            {isAdmin && (
+              <a href="/admin" className="btn btn-ghost" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}>
+                Admin app
+              </a>
+            )}
           </div>
 
           <div className="tree-controls-scroll">
@@ -2426,106 +2508,7 @@ function TreeFlow() {
             </section>
 
             <section className="tree-controls-section">
-              <h2 className="tree-section-title">Affichage de l&apos;arbre</h2>
-              <div className="tree-controls-grid">
-                <div className="input-group tree-input-group">
-                  <label className="input-label" htmlFor="select-ancestor-generations">
-                    Ancêtres
-                  </label>
-                  <select
-                    className="input"
-                    value={ancestorGens}
-                    onChange={(e) => setAncestorGens(Number(e.target.value))}
-                    id="select-ancestor-generations"
-                  >
-                    {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="input-group tree-input-group">
-                  <label className="input-label" htmlFor="select-descendant-generations">
-                    Descendants
-                  </label>
-                  <select
-                    className="input"
-                    value={descendantGens}
-                    onChange={(e) => setDescendantGens(Number(e.target.value))}
-                    id="select-descendant-generations"
-                  >
-                    {[0, 1, 2, 3, 4, 5, 6].map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="input-group tree-input-group">
-                  <label className="input-label" htmlFor="select-navigation-mode">
-                    Navigation
-                  </label>
-                  <select
-                    className="input"
-                    value={focusModeEnabled ? 'FOCUS' : 'EXPANDED'}
-                    onChange={(e) => setFocusModeEnabled(e.target.value === 'FOCUS')}
-                    id="select-navigation-mode"
-                  >
-                    <option value="FOCUS">Focus</option>
-                    <option value="EXPANDED">Étendu</option>
-                  </select>
-                </div>
-
-                <div className="input-group tree-input-group">
-                  <label className="input-label" htmlFor="select-drag-link-mode">
-                    Glisser-relier
-                  </label>
-                  <select
-                    className="input"
-                    value={dragLinkType}
-                    onChange={(e) => setDragLinkType(e.target.value as DragLinkType)}
-                    id="select-drag-link-mode"
-                  >
-                    <option value="PARENT_CHILD">Parenté</option>
-                    <option value="UNION">Union</option>
-                  </select>
-                </div>
-
-                {dragLinkType === 'PARENT_CHILD' ? (
-                  <div className="input-group tree-input-group">
-                    <label className="input-label" htmlFor="select-relationship-type">
-                      Type de lien
-                    </label>
-                    <select
-                      className="input"
-                      value={relationshipType}
-                      onChange={(e) => setRelationshipType(e.target.value)}
-                      id="select-relationship-type"
-                    >
-                      <option value="BIOLOGICAL">Bio</option>
-                      <option value="ADOPTIVE">Adoptive</option>
-                      <option value="FOSTER">Accueil</option>
-                    </select>
-                  </div>
-                ) : (
-                  <div className="input-group tree-input-group">
-                    <label className="input-label" htmlFor="select-union-type">
-                      Type d&apos;union
-                    </label>
-                    <select
-                      className="input"
-                      value={unionType}
-                      onChange={(e) => setUnionType(e.target.value)}
-                      id="select-union-type"
-                    >
-                      <option value="MARRIAGE">Mariage</option>
-                      <option value="PACS">PACS</option>
-                      <option value="PARTNERSHIP">Partenariat</option>
-                      <option value="OTHER">Autre</option>
-                    </select>
-                  </div>
-                )}
-              </div>
-
+              <h2 className="tree-section-title">Actions rapides</h2>
               <div className="tree-controls-row">
                 <button
                   className="btn btn-ghost"
@@ -2551,11 +2534,8 @@ function TreeFlow() {
                   {presentationMode ? 'Quitter présentation' : 'Présentation'}
                 </button>
               </div>
-            </section>
 
-            {isAdmin && (
-              <section className="tree-controls-section">
-                <h2 className="tree-section-title">Actions admin</h2>
+              {isAdmin && (
                 <div className="tree-controls-row">
                   {selectedPersonId && (
                     <button
@@ -2576,12 +2556,116 @@ function TreeFlow() {
                     + Nouvelle personne
                   </button>
                 </div>
-              </section>
-            )}
+              )}
+            </section>
 
-            {!menusCompact && (
-              <section className="tree-controls-section">
-                <h2 className="tree-section-title">Historique et exports</h2>
+            <details className="tree-controls-foldout" open={!menusCompact}>
+              <summary>Paramètres de l&apos;arbre</summary>
+              <div className="tree-controls-foldout-content">
+                <div className="tree-controls-grid">
+                  <div className="input-group tree-input-group">
+                    <label className="input-label" htmlFor="select-ancestor-generations">
+                      Ancêtres
+                    </label>
+                    <select
+                      className="input"
+                      value={ancestorGens}
+                      onChange={(e) => setAncestorGens(Number(e.target.value))}
+                      id="select-ancestor-generations"
+                    >
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="input-group tree-input-group">
+                    <label className="input-label" htmlFor="select-descendant-generations">
+                      Descendants
+                    </label>
+                    <select
+                      className="input"
+                      value={descendantGens}
+                      onChange={(e) => setDescendantGens(Number(e.target.value))}
+                      id="select-descendant-generations"
+                    >
+                      {[0, 1, 2, 3, 4, 5, 6].map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="input-group tree-input-group">
+                    <label className="input-label" htmlFor="select-navigation-mode">
+                      Navigation
+                    </label>
+                    <select
+                      className="input"
+                      value={focusModeEnabled ? 'FOCUS' : 'EXPANDED'}
+                      onChange={(e) => setFocusModeEnabled(e.target.value === 'FOCUS')}
+                      id="select-navigation-mode"
+                    >
+                      <option value="FOCUS">Focus</option>
+                      <option value="EXPANDED">Étendu</option>
+                    </select>
+                  </div>
+
+                  <div className="input-group tree-input-group">
+                    <label className="input-label" htmlFor="select-drag-link-mode">
+                      Glisser-relier
+                    </label>
+                    <select
+                      className="input"
+                      value={dragLinkType}
+                      onChange={(e) => setDragLinkType(e.target.value as DragLinkType)}
+                      id="select-drag-link-mode"
+                    >
+                      <option value="PARENT_CHILD">Parenté</option>
+                      <option value="UNION">Union</option>
+                    </select>
+                  </div>
+
+                  {dragLinkType === 'PARENT_CHILD' ? (
+                    <div className="input-group tree-input-group">
+                      <label className="input-label" htmlFor="select-relationship-type">
+                        Type de lien
+                      </label>
+                      <select
+                        className="input"
+                        value={relationshipType}
+                        onChange={(e) => setRelationshipType(e.target.value)}
+                        id="select-relationship-type"
+                      >
+                        <option value="BIOLOGICAL">Bio</option>
+                        <option value="ADOPTIVE">Adoptive</option>
+                        <option value="FOSTER">Accueil</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="input-group tree-input-group">
+                      <label className="input-label" htmlFor="select-union-type">
+                        Type d&apos;union
+                      </label>
+                      <select
+                        className="input"
+                        value={unionType}
+                        onChange={(e) => setUnionType(e.target.value)}
+                        id="select-union-type"
+                      >
+                        <option value="MARRIAGE">Mariage</option>
+                        <option value="PACS">PACS</option>
+                        <option value="PARTNERSHIP">Partenariat</option>
+                        <option value="OTHER">Autre</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </details>
+
+            <details className="tree-controls-foldout" open={!menusCompact}>
+              <summary>Historique et exports</summary>
+              <div className="tree-controls-foldout-content">
                 <div className="tree-controls-row">
                   <button
                     className="btn btn-ghost"
@@ -2639,8 +2723,8 @@ function TreeFlow() {
                     {exportBusy === 'CSV_BRANCH' ? 'Export branche...' : 'CSV branche'}
                   </button>
                 </div>
-              </section>
-            )}
+              </div>
+            </details>
 
             <details className="tree-controls-help">
               <summary>Raccourcis clavier</summary>
@@ -2714,6 +2798,38 @@ function TreeFlow() {
               background: hsla(0, 0%, 100%, 0.02);
             }
 
+            .tree-controls-foldout {
+              margin: 0;
+              border: 1px solid var(--color-border-subtle);
+              border-radius: var(--radius-lg);
+              background: hsla(0, 0%, 100%, 0.02);
+              overflow: hidden;
+            }
+
+            .tree-controls-foldout summary {
+              cursor: pointer;
+              list-style: none;
+              padding: var(--space-3);
+              font-size: var(--text-xs);
+              font-weight: 700;
+              color: var(--color-text-secondary);
+              background: hsla(0, 0%, 100%, 0.02);
+            }
+
+            .tree-controls-foldout summary::-webkit-details-marker {
+              display: none;
+            }
+
+            .tree-controls-foldout[open] summary {
+              border-bottom: 1px solid var(--color-border-subtle);
+            }
+
+            .tree-controls-foldout-content {
+              display: grid;
+              gap: var(--space-2);
+              padding: var(--space-3);
+            }
+
             .tree-section-title {
               margin: 0;
               font-size: var(--text-sm);
@@ -2769,6 +2885,10 @@ function TreeFlow() {
             }
 
             .tree-controls[data-compact='true'] .tree-controls-section {
+              padding: var(--space-2);
+            }
+
+            .tree-controls[data-compact='true'] .tree-controls-foldout-content {
               padding: var(--space-2);
             }
 
@@ -2942,6 +3062,7 @@ function TreeFlow() {
             onNodeClick={onNodeClick}
             onNodeDoubleClick={onNodeDoubleClick}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             fitView
             fitViewOptions={{ padding: 0.15, duration: 400 }}
             minZoom={0.05}
