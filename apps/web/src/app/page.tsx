@@ -26,7 +26,6 @@ import {
   type Edge,
   type Connection,
   BackgroundVariant,
-  Position,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
@@ -58,13 +57,23 @@ function CoupleHorizontalEdge({
   label,
   data,
 }: EdgeProps) {
+  const sourceBottomY = typeof data?.sourceBottomY === 'number'
+    ? data.sourceBottomY
+    : sourceY;
+  const targetBottomY = typeof data?.targetBottomY === 'number'
+    ? data.targetBottomY
+    : targetY;
   const coupleY = typeof data?.coupleY === 'number'
     ? data.coupleY
-    : Math.max(sourceY, targetY) + COUPLE_LINK_MARGIN;
+    : Math.max(sourceBottomY, targetBottomY) + COUPLE_LINK_MARGIN;
   const labelText = typeof label === 'string' || typeof label === 'number' ? label : null;
   const labelX = (sourceX + targetX) / 2;
 
-  const path = `M ${sourceX},${coupleY} L ${targetX},${coupleY}`;
+  const path = [
+    `M ${sourceX},${sourceBottomY} L ${sourceX},${coupleY}`,
+    `M ${targetX},${targetBottomY} L ${targetX},${coupleY}`,
+    `M ${sourceX},${coupleY} L ${targetX},${coupleY}`,
+  ].join(' ');
 
   return (
     <>
@@ -105,9 +114,10 @@ function OrthogonalDescendantEdge({
   markerEnd,
   data,
 }: EdgeProps) {
+  const startX = typeof data?.sourceCoupleX === 'number' ? data.sourceCoupleX : sourceX;
   const startY = typeof data?.sourceCoupleY === 'number' ? data.sourceCoupleY : sourceY;
   const preTargetY = Math.max(startY + 12, targetY - CHILD_ORTHOGONAL_PRE_TARGET_GAP);
-  const path = `M ${sourceX},${startY} L ${sourceX},${preTargetY} L ${targetX},${preTargetY} L ${targetX},${targetY}`;
+  const path = `M ${startX},${startY} L ${startX},${preTargetY} L ${targetX},${preTargetY} L ${targetX},${targetY}`;
 
   return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
 }
@@ -174,6 +184,7 @@ type TreePerson = {
 type LinkMode = 'PARENT' | 'CHILD' | 'SPOUSE';
 type LinkTarget = 'new' | 'existing';
 type DragLinkType = 'PARENT_CHILD' | 'UNION';
+type NodeQuickAction = 'ADD_FATHER' | 'ADD_MOTHER' | 'ADD_SPOUSE' | 'ADD_CHILD';
 
 type OperationKind = 'person' | 'relationship' | 'union';
 
@@ -420,6 +431,7 @@ function TreeFlow() {
     [selectedPerson],
   );
   const showSelectionPanel = Boolean(selectedPerson) && !wideTreeMode && !presentationMode;
+  const isNodeEditMode = authChecked && isAdmin && sidePanelTab === 'EDIT';
 
   useEffect(() => {
     document.body.classList.add('tree-workspace-mode');
@@ -1348,9 +1360,8 @@ function TreeFlow() {
       const { nodes: layoutedNodes } = getLayoutedElements(flowNodes, relationshipEdgesForLayout);
       const nodeById = new Map(layoutedNodes.map((node) => [node.id, node]));
 
-      const midpointNodes: Node[] = [];
-      const midpointByPairKey = new Map<string, string>();
       const coupleYByPairKey = new Map<string, number>();
+      const coupleMidXByPairKey = new Map<string, number>();
       const coupleEdges: Edge[] = [];
 
       couplePairs.forEach((pair) => {
@@ -1363,7 +1374,14 @@ function TreeFlow() {
         const pairColor = colorFromSeed(pair.key);
         const pairShadow = pairColor.replace('hsl(', 'hsla(').replace(')', ', 0.30)');
         const coupleY = Math.max(partner1Node.position.y, partner2Node.position.y) + NODE_HEIGHT + COUPLE_LINK_MARGIN;
+        const center1X = partner1Node.position.x + NODE_WIDTH / 2;
+        const center2X = partner2Node.position.x + NODE_WIDTH / 2;
+        const midpointX = (center1X + center2X) / 2;
+        const sourceBottomY = partner1Node.position.y + NODE_HEIGHT;
+        const targetBottomY = partner2Node.position.y + NODE_HEIGHT;
+
         coupleYByPairKey.set(pair.key, coupleY);
+        coupleMidXByPairKey.set(pair.key, midpointX);
 
         coupleEdges.push({
           id: `couple-${pair.key}`,
@@ -1393,39 +1411,8 @@ function TreeFlow() {
           data: {
             unionType: pair.unionType,
             coupleY,
-          },
-        });
-
-        const center1X = partner1Node.position.x + NODE_WIDTH / 2;
-        const center2X = partner2Node.position.x + NODE_WIDTH / 2;
-        const midpointX = (center1X + center2X) / 2;
-        const midpointNodeId = `pair-midpoint-${pair.key}`;
-
-        midpointByPairKey.set(pair.key, midpointNodeId);
-        midpointNodes.push({
-          id: midpointNodeId,
-          type: 'default',
-          data: { kind: 'midpoint', pairKey: pair.key },
-          position: {
-            x: midpointX - 1,
-            y: coupleY - 1,
-          },
-          width: 2,
-          height: 2,
-          sourcePosition: Position.Bottom,
-          targetPosition: Position.Top,
-          draggable: false,
-          selectable: false,
-          connectable: false,
-          deletable: false,
-          hidden: true,
-          style: {
-            width: 2,
-            height: 2,
-            opacity: 0,
-            border: 'none',
-            background: 'transparent',
-            pointerEvents: 'none',
+            sourceBottomY,
+            targetBottomY,
           },
         });
       });
@@ -1438,17 +1425,24 @@ function TreeFlow() {
 
         if (parentIds.length === 2) {
           const pairKey = buildPairKey(parentIds[0], parentIds[1]);
-          const midpointNodeId = midpointByPairKey.get(pairKey);
+          const pair = couplePairs.get(pairKey);
           const childLinkId = `${pairKey}|${rel.childId}`;
 
-          if (midpointNodeId && !linkedChildrenFromPair.has(childLinkId)) {
+          const sourceCoupleY = coupleYByPairKey.get(pairKey);
+          const sourceCoupleX = coupleMidXByPairKey.get(pairKey);
+
+          if (
+            pair
+            && typeof sourceCoupleY === 'number'
+            && typeof sourceCoupleX === 'number'
+            && !linkedChildrenFromPair.has(childLinkId)
+          ) {
             linkedChildrenFromPair.add(childLinkId);
             const pairColor = colorFromSeed(pairKey);
-            const sourceCoupleY = coupleYByPairKey.get(pairKey);
 
             renderedChildEdges.push({
               id: `children-${pairKey}-${rel.childId}`,
-              source: midpointNodeId,
+              source: pair.partner1Id,
               target: rel.childId,
               type: 'orthogonalDescendant',
               animated: false,
@@ -1459,6 +1453,7 @@ function TreeFlow() {
               },
               data: {
                 sourceCoupleY,
+                sourceCoupleX,
               },
             });
             return;
@@ -1479,7 +1474,7 @@ function TreeFlow() {
         });
       });
 
-      setNodes([...layoutedNodes, ...midpointNodes]);
+      setNodes(layoutedNodes);
       setEdges([...coupleEdges, ...renderedChildEdges]);
       setNodeCount(layoutedNodes.length);
 
@@ -2308,6 +2303,154 @@ function TreeFlow() {
     linkVerb,
     setActionError,
   ]);
+
+  const handleNodeQuickAction = useCallback(async (
+    anchorPersonId: string,
+    action: NodeQuickAction,
+  ) => {
+    if (!anchorPersonId) return;
+    if (!ensureAdminSession() || !token) return;
+
+    clearActionState();
+    setSidePanelTab('EDIT');
+    setLinkTarget('new');
+    setSelectedPersonId(anchorPersonId);
+
+    const anchorPerson = treePersonById[anchorPersonId];
+    const defaultSurname =
+      anchorPerson?.birthSurname ||
+      anchorPerson?.usageSurname ||
+      undefined;
+
+    const newPersonOpId = makeOperationId('card-quick-person');
+    const operations: HistoryOperation[] = [
+      {
+        opId: newPersonOpId,
+        kind: 'person',
+        payload: {
+          givenNames:
+            action === 'ADD_FATHER'
+              ? 'Pere a completer'
+              : action === 'ADD_MOTHER'
+                ? 'Mere a completer'
+                : action === 'ADD_CHILD'
+                  ? 'Enfant a completer'
+                  : 'Conjoint a completer',
+          usageSurname: defaultSurname,
+          birthSurname: defaultSurname,
+          birthPlace: anchorPerson?.birthPlace || undefined,
+          gender:
+            action === 'ADD_FATHER'
+              ? 'MALE'
+              : action === 'ADD_MOTHER'
+                ? 'FEMALE'
+                : 'UNKNOWN',
+        },
+      },
+    ];
+
+    if (action === 'ADD_CHILD') {
+      operations.push({
+        opId: makeOperationId('card-quick-child-link'),
+        kind: 'relationship',
+        payload: {
+          parentId: anchorPersonId,
+          childId: `@${newPersonOpId}`,
+          type: relationshipType,
+        },
+      });
+    } else if (action === 'ADD_SPOUSE') {
+      operations.push({
+        opId: makeOperationId('card-quick-spouse-link'),
+        kind: 'union',
+        payload: {
+          partner1Id: anchorPersonId,
+          partner2Id: `@${newPersonOpId}`,
+          type: unionType,
+        },
+      });
+    } else {
+      operations.push({
+        opId: makeOperationId('card-quick-parent-link'),
+        kind: 'relationship',
+        payload: {
+          parentId: `@${newPersonOpId}`,
+          childId: anchorPersonId,
+          type: relationshipType,
+        },
+      });
+    }
+
+    const actionLabel =
+      action === 'ADD_FATHER'
+        ? 'Ajout rapide pere'
+        : action === 'ADD_MOTHER'
+          ? 'Ajout rapide mere'
+          : action === 'ADD_SPOUSE'
+            ? 'Ajout rapide conjoint'
+            : 'Ajout rapide enfant';
+
+    const executed = await runWithHistory(actionLabel, operations);
+    if (!executed) return;
+
+    const createdPerson = executed.find((operation) => operation.opId === newPersonOpId)?.createdId;
+    if (createdPerson) {
+      setSelectedPersonId(createdPerson);
+    }
+
+    setActionSuccess(
+      action === 'ADD_FATHER'
+        ? 'Pere ajoute depuis la carte.'
+        : action === 'ADD_MOTHER'
+          ? 'Mere ajoutee depuis la carte.'
+          : action === 'ADD_SPOUSE'
+            ? 'Conjoint ajoute depuis la carte.'
+            : 'Enfant ajoute depuis la carte.',
+    );
+  }, [
+    clearActionState,
+    ensureAdminSession,
+    makeOperationId,
+    relationshipType,
+    runWithHistory,
+    token,
+    treePersonById,
+    unionType,
+  ]);
+
+  useEffect(() => {
+    setNodes((prevNodes) => {
+      let changed = false;
+
+      const nextNodes = prevNodes.map((node) => {
+        if (node.type !== 'person') {
+          return node;
+        }
+
+        const nodeData = (node.data || {}) as any;
+
+        if (
+          nodeData.isEditMode === isNodeEditMode
+          && nodeData.onQuickAdd === handleNodeQuickAction
+        ) {
+          return node;
+        }
+
+        changed = true;
+
+        return {
+          ...node,
+          data: {
+            ...nodeData,
+            isEditMode: isNodeEditMode,
+            onQuickAdd: handleNodeQuickAction,
+          },
+        };
+      });
+
+      return changed ? nextNodes : prevNodes;
+    });
+  }, [handleNodeQuickAction, isNodeEditMode, setNodes]);
 
   const changeRootFromSearch = useCallback((person: any) => {
     setRootPersonId(person.id);
