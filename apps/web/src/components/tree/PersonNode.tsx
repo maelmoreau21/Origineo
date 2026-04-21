@@ -13,6 +13,8 @@ import { memo, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 
 type NodeQuickAction = 'ADD_FATHER' | 'ADD_MOTHER' | 'ADD_SPOUSE' | 'ADD_CHILD';
+type QuickAddGender = 'MALE' | 'FEMALE' | 'OTHER' | 'UNKNOWN';
+type QuickMenuGenderOption = 'AUTO' | QuickAddGender;
 type QuickMenuAnchor = 'top' | 'right' | 'bottom' | 'left';
 
 type PersonNodeData = {
@@ -20,12 +22,13 @@ type PersonNodeData = {
   generation?: number;
   isRoot?: boolean;
   isEditMode?: boolean;
-  onQuickAdd?: (personId: string, action: NodeQuickAction) => void;
+  onQuickAdd?: (personId: string, action: NodeQuickAction, preferredGender?: QuickAddGender) => void;
 };
 
 function PersonNode({ data }: NodeProps) {
   const { person, generation, isRoot, isEditMode, onQuickAdd } = data as PersonNodeData;
   const [quickMenuAnchor, setQuickMenuAnchor] = useState<QuickMenuAnchor | null>(null);
+  const [quickGender, setQuickGender] = useState<QuickMenuGenderOption>('AUTO');
 
   useEffect(() => {
     if (!isEditMode && quickMenuAnchor) {
@@ -81,7 +84,8 @@ function PersonNode({ data }: NodeProps) {
     event.stopPropagation();
 
     if (!onQuickAdd) return;
-    onQuickAdd(person.id, action);
+    const preferredGender = quickGender === 'AUTO' ? undefined : quickGender;
+    onQuickAdd(person.id, action, preferredGender);
     setQuickMenuAnchor(null);
   };
 
@@ -208,6 +212,24 @@ function PersonNode({ data }: NodeProps) {
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
               >
+                <label
+                  className="person-node__quick-menu-label"
+                  htmlFor={`quick-gender-${person.id}`}
+                >
+                  Genre de la personne creee
+                </label>
+                <select
+                  id={`quick-gender-${person.id}`}
+                  className="person-node__quick-menu-select"
+                  value={quickGender}
+                  onChange={(event) => setQuickGender(event.target.value as QuickMenuGenderOption)}
+                >
+                  <option value="AUTO">Auto (selon action)</option>
+                  <option value="UNKNOWN">Inconnu</option>
+                  <option value="MALE">Homme</option>
+                  <option value="FEMALE">Femme</option>
+                  <option value="OTHER">Autre / non-binaire</option>
+                </select>
                 <button
                   type="button"
                   className="person-node__quick-menu-item"
@@ -336,6 +358,29 @@ function PersonNode({ data }: NodeProps) {
           padding: 6px 8px;
           cursor: pointer;
           transition: background-color 120ms ease, border-color 120ms ease;
+        }
+
+        .person-node__quick-menu-label {
+          font-size: 0.62rem;
+          color: var(--color-text-secondary);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          padding: 2px 2px 0;
+        }
+
+        .person-node__quick-menu-select {
+          width: 100%;
+          border: 1px solid var(--color-border-subtle);
+          border-radius: var(--radius-sm);
+          background: var(--color-bg-secondary);
+          color: var(--color-text-primary);
+          font-size: 0.68rem;
+          padding: 6px 8px;
+          outline: none;
+        }
+
+        .person-node__quick-menu-select:focus {
+          border-color: var(--color-accent);
         }
 
         .person-node__quick-menu-item:hover {

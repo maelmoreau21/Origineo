@@ -182,9 +182,10 @@ type TreePerson = {
 };
 
 type LinkMode = 'PARENT' | 'CHILD' | 'SPOUSE';
-type LinkTarget = 'new' | 'existing';
+type LinkTarget = 'new' | 'existing' | 'standalone';
 type DragLinkType = 'PARENT_CHILD' | 'UNION';
 type NodeQuickAction = 'ADD_FATHER' | 'ADD_MOTHER' | 'ADD_SPOUSE' | 'ADD_CHILD';
+type QuickAddGender = 'MALE' | 'FEMALE' | 'OTHER' | 'UNKNOWN';
 
 type OperationKind = 'person' | 'relationship' | 'union';
 
@@ -1435,27 +1436,30 @@ function TreeFlow() {
             pair
             && typeof sourceCoupleY === 'number'
             && typeof sourceCoupleX === 'number'
-            && !linkedChildrenFromPair.has(childLinkId)
           ) {
-            linkedChildrenFromPair.add(childLinkId);
-            const pairColor = colorFromSeed(pairKey);
+            if (!linkedChildrenFromPair.has(childLinkId)) {
+              linkedChildrenFromPair.add(childLinkId);
+              const pairColor = colorFromSeed(pairKey);
 
-            renderedChildEdges.push({
-              id: `children-${pairKey}-${rel.childId}`,
-              source: pair.partner1Id,
-              target: rel.childId,
-              type: 'orthogonalDescendant',
-              animated: false,
-              style: {
-                stroke: pairColor,
-                strokeWidth: 2.8,
-                opacity: 0.95,
-              },
-              data: {
-                sourceCoupleY,
-                sourceCoupleX,
-              },
-            });
+              renderedChildEdges.push({
+                id: `children-${pairKey}-${rel.childId}`,
+                source: pair.partner1Id,
+                target: rel.childId,
+                type: 'orthogonalDescendant',
+                animated: false,
+                style: {
+                  stroke: pairColor,
+                  strokeWidth: 2.8,
+                  opacity: 0.95,
+                },
+                data: {
+                  sourceCoupleY,
+                  sourceCoupleX,
+                },
+              });
+            }
+
+            // When a child is linked through a couple midpoint, skip direct parent->child fallback edges.
             return;
           }
         }
@@ -2183,7 +2187,10 @@ function TreeFlow() {
   ]);
 
   const createAndAttachNewPerson = useCallback(async () => {
-    if (!selectedPersonId) return;
+    if (linkTarget !== 'standalone' && !selectedPersonId) {
+      setActionError('Sélectionnez d\'abord une personne dans l\'arbre, ou utilisez le mode "personne indépendante".');
+      return;
+    }
 
     const payload = toNewPersonPayload();
     if (!payload.givenNames) {
@@ -2199,6 +2206,23 @@ function TreeFlow() {
         payload,
       },
     ];
+
+    if (linkTarget === 'standalone') {
+      const executed = await runWithHistory('Créer une personne indépendante', operations);
+      if (!executed) return;
+
+      const createdPerson = executed.find((op) => op.opId === newPersonOpId)?.createdId;
+      if (createdPerson) {
+        setSelectedPersonId(createdPerson);
+        if (!rootPersonId) {
+          setRootPersonId(createdPerson);
+        }
+      }
+
+      setActionSuccess('Personne créée avec succès.');
+      resetNewPersonForm();
+      return;
+    }
 
     const linkOperation = buildLinkOperation(
       makeOperationId('link-new'),
@@ -2236,7 +2260,9 @@ function TreeFlow() {
     setActionSuccess(`${linkVerb} avec succès.`);
     resetNewPersonForm();
   }, [
+    linkTarget,
     selectedPersonId,
+    rootPersonId,
     toNewPersonPayload,
     makeOperationId,
     buildLinkOperation,
@@ -2247,11 +2273,15 @@ function TreeFlow() {
     linkVerb,
     selectedPersonLabel,
     resetNewPersonForm,
+    setRootPersonId,
     setActionError,
   ]);
 
   const linkExistingPerson = useCallback(async (personId: string) => {
-    if (!selectedPersonId) return;
+    if (!selectedPersonId) {
+      setActionError('Sélectionnez une personne source avant de lier une personne existante.');
+      return;
+    }
 
     if (linkMode === 'CHILD' && selectedChildUnion && personId === selectedChildUnion.partnerId) {
       setActionError(
@@ -2307,6 +2337,7 @@ function TreeFlow() {
   const handleNodeQuickAction = useCallback(async (
     anchorPersonId: string,
     action: NodeQuickAction,
+    preferredGender?: QuickAddGender,
   ) => {
     if (!anchorPersonId) return;
     if (!ensureAdminSession() || !token) return;
@@ -2323,6 +2354,13 @@ function TreeFlow() {
       undefined;
 
     const newPersonOpId = makeOperationId('card-quick-person');
+    const defaultGender: QuickAddGender =
+      action === 'ADD_FATHER'
+        ? 'MALE'
+        : action === 'ADD_MOTHER'
+          ? 'FEMALE'
+          : 'UNKNOWN';
+
     const operations: HistoryOperation[] = [
       {
         opId: newPersonOpId,
@@ -2339,12 +2377,7 @@ function TreeFlow() {
           usageSurname: defaultSurname,
           birthSurname: defaultSurname,
           birthPlace: anchorPerson?.birthPlace || undefined,
-          gender:
-            action === 'ADD_FATHER'
-              ? 'MALE'
-              : action === 'ADD_MOTHER'
-                ? 'FEMALE'
-                : 'UNKNOWN',
+          gender: preferredGender ?? defaultGender,
         },
       },
     ];
@@ -2883,18 +2916,18 @@ function TreeFlow() {
               top: var(--space-3);
               left: var(--space-3);
               bottom: var(--space-3);
-              width: min(440px, calc(100% - 2 * var(--space-3)));
+              width: min(360px, calc(100% - 2 * var(--space-3)));
               z-index: 15;
               display: flex;
               flex-direction: column;
               align-items: stretch;
               justify-content: flex-start;
               padding: 0;
-              background: linear-gradient(170deg, hsla(220, 20%, 16%, 0.92), hsla(225, 18%, 12%, 0.92));
+              background: rgba(17, 20, 26, 0.92);
               border: 1px solid var(--color-border);
               border-radius: var(--radius-xl);
-              box-shadow: var(--shadow-lg);
-              backdrop-filter: blur(14px);
+              box-shadow: 0 12px 30px hsla(223, 45%, 8%, 0.32);
+              backdrop-filter: blur(10px);
               overflow: hidden;
               transition: opacity var(--transition-fast), transform var(--transition-fast);
             }
@@ -2904,15 +2937,16 @@ function TreeFlow() {
               align-items: flex-start;
               justify-content: space-between;
               gap: var(--space-3);
-              padding: var(--space-4) var(--space-4) var(--space-3);
+              padding: var(--space-3) var(--space-3) var(--space-2);
               border-bottom: 1px solid var(--color-border-subtle);
-              background: hsla(0, 0%, 100%, 0.02);
+              background: transparent;
             }
 
             .tree-controls-subtitle {
               margin: 0;
               color: var(--color-text-secondary);
               font-size: var(--text-xs);
+              max-width: 34ch;
             }
 
             .tree-controls-links {
@@ -2920,8 +2954,13 @@ function TreeFlow() {
               align-items: center;
               flex-wrap: wrap;
               gap: var(--space-2);
-              padding: 0 var(--space-4) var(--space-3);
+              padding: 0 var(--space-3) var(--space-3);
               border-bottom: 1px solid var(--color-border-subtle);
+            }
+
+            .tree-controls-links .btn {
+              border: 1px solid var(--color-border-subtle);
+              background: var(--color-bg-secondary);
             }
 
             .tree-controls-scroll {
@@ -2929,34 +2968,54 @@ function TreeFlow() {
               overflow-y: auto;
               display: grid;
               gap: var(--space-3);
-              padding: var(--space-4);
+              padding: var(--space-3);
+            }
+
+            .tree-controls-scroll::-webkit-scrollbar {
+              width: 8px;
+            }
+
+            .tree-controls-scroll::-webkit-scrollbar-thumb {
+              background: hsla(201, 18%, 58%, 0.36);
+              border-radius: 999px;
             }
 
             .tree-controls-section {
               display: grid;
               gap: var(--space-2);
-              padding: var(--space-3);
+              padding: var(--space-2);
               border: 1px solid var(--color-border-subtle);
               border-radius: var(--radius-lg);
-              background: hsla(0, 0%, 100%, 0.02);
+              background: var(--color-bg-primary);
+              box-shadow: none;
             }
 
             .tree-controls-foldout {
               margin: 0;
               border: 1px solid var(--color-border-subtle);
               border-radius: var(--radius-lg);
-              background: hsla(0, 0%, 100%, 0.02);
+              background: var(--color-bg-primary);
               overflow: hidden;
             }
 
             .tree-controls-foldout summary {
               cursor: pointer;
               list-style: none;
-              padding: var(--space-3);
+              padding: var(--space-2) var(--space-3);
               font-size: var(--text-xs);
               font-weight: 700;
               color: var(--color-text-secondary);
-              background: hsla(0, 0%, 100%, 0.02);
+              background: var(--color-bg-secondary);
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: var(--space-2);
+            }
+
+            .tree-controls-foldout summary::after {
+              content: '+';
+              font-size: 0.8rem;
+              opacity: 0.85;
             }
 
             .tree-controls-foldout summary::-webkit-details-marker {
@@ -2967,10 +3026,14 @@ function TreeFlow() {
               border-bottom: 1px solid var(--color-border-subtle);
             }
 
+            .tree-controls-foldout[open] summary::after {
+              content: '−';
+            }
+
             .tree-controls-foldout-content {
               display: grid;
               gap: var(--space-2);
-              padding: var(--space-3);
+              padding: var(--space-2) var(--space-3) var(--space-3);
             }
 
             .tree-section-title {
@@ -2978,6 +3041,8 @@ function TreeFlow() {
               font-size: var(--text-sm);
               font-weight: 700;
               color: var(--color-text-primary);
+              letter-spacing: 0;
+              text-transform: none;
             }
 
             .tree-controls-row {
@@ -2985,6 +3050,23 @@ function TreeFlow() {
               align-items: center;
               flex-wrap: wrap;
               gap: var(--space-2);
+            }
+
+            .tree-controls-row .btn {
+              border: 1px solid var(--color-border-subtle);
+              background: var(--color-bg-secondary);
+            }
+
+            .tree-controls-row .btn-primary {
+              border-color: transparent;
+              background: var(--color-accent);
+              color: var(--color-bg-primary);
+            }
+
+            .tree-controls-row .btn-secondary {
+              border-color: var(--color-border-subtle);
+              background: var(--color-bg-secondary);
+              color: var(--color-text-primary);
             }
 
             .tree-controls-grid {
@@ -2999,14 +3081,16 @@ function TreeFlow() {
 
             .tree-input-group .input {
               padding: var(--space-2);
+              border: 1px solid var(--color-border-subtle);
+              background: var(--color-bg-secondary);
             }
 
             .tree-controls-help {
               margin: 0;
-              padding: var(--space-3);
-              border: 1px dashed var(--color-border-subtle);
+              padding: var(--space-2) var(--space-3);
+              border: 1px solid var(--color-border-subtle);
               border-radius: var(--radius-lg);
-              background: hsla(0, 0%, 100%, 0.015);
+              background: var(--color-bg-primary);
             }
 
             .tree-controls-help summary {
@@ -3024,7 +3108,7 @@ function TreeFlow() {
             }
 
             .tree-controls select {
-              background: var(--color-bg-tertiary);
+              background: var(--color-bg-secondary);
             }
 
             .tree-controls[data-compact='true'] .tree-controls-section {
@@ -3037,14 +3121,113 @@ function TreeFlow() {
 
             .tree-controls[data-visible='false'] {
               opacity: 0;
-              transform: translateX(-14px);
+              transform: translateX(-10px);
               pointer-events: none;
             }
 
             .tree-controls[data-presentation='true'] {
               opacity: 0;
-              transform: translateX(-14px);
+              transform: translateX(-10px);
               pointer-events: none;
+            }
+
+            .tree-side-panel {
+              position: absolute;
+              top: var(--space-3);
+              right: var(--space-3);
+              bottom: var(--space-3);
+              width: min(380px, calc(100vw - 2 * var(--space-3)));
+              z-index: 14;
+            }
+
+            .tree-side-shell {
+              height: 100%;
+              overflow-y: auto;
+              padding: var(--space-3);
+              border: 1px solid var(--color-border);
+              background: rgba(17, 20, 26, 0.92);
+              box-shadow: 0 12px 30px hsla(223, 45%, 8%, 0.32);
+            }
+
+            .tree-side-shell::-webkit-scrollbar {
+              width: 8px;
+            }
+
+            .tree-side-shell::-webkit-scrollbar-thumb {
+              background: hsla(201, 18%, 58%, 0.36);
+              border-radius: 999px;
+            }
+
+            .tree-side-header {
+              display: flex;
+              justify-content: space-between;
+              gap: var(--space-2);
+              align-items: flex-start;
+              border-bottom: 1px solid var(--color-border-subtle);
+              padding-bottom: var(--space-2);
+            }
+
+            .tree-side-eyebrow {
+              font-size: var(--text-xs);
+              color: var(--color-text-muted);
+              text-transform: uppercase;
+              letter-spacing: 0.04em;
+              font-weight: 700;
+            }
+
+            .tree-side-header-actions {
+              display: flex;
+              gap: var(--space-1);
+            }
+
+            .tree-side-header-actions .btn {
+              border: 1px solid var(--color-border-subtle);
+              background: var(--color-bg-secondary);
+            }
+
+            .tree-side-tabs {
+              display: grid;
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+              gap: var(--space-2);
+              margin-top: var(--space-2);
+            }
+
+            .tree-side-tabs .btn {
+              border: 1px solid var(--color-border-subtle);
+              background: var(--color-bg-secondary);
+              font-size: var(--text-xs);
+              font-weight: 600;
+            }
+
+            .tree-side-tabs .btn-primary {
+              border-color: transparent;
+              background: var(--color-accent);
+              color: var(--color-bg-primary);
+            }
+
+            .tree-side-tab-content {
+              margin-top: var(--space-2);
+            }
+
+            .tree-side-alert {
+              margin-top: var(--space-2);
+              padding: var(--space-2) var(--space-3);
+              border-radius: var(--radius-md);
+              font-size: var(--text-xs);
+              border: 1px solid var(--color-border-subtle);
+              background: var(--color-bg-primary);
+            }
+
+            .tree-side-alert--error {
+              border-color: var(--color-rose);
+              color: var(--color-rose);
+              background: var(--color-rose-subtle);
+            }
+
+            .tree-side-alert--success {
+              border-color: var(--color-emerald);
+              color: var(--color-emerald);
+              background: var(--color-emerald-subtle);
             }
 
             @media (max-width: 1200px) {
@@ -3053,6 +3236,13 @@ function TreeFlow() {
                 top: var(--space-2);
                 bottom: var(--space-2);
                 width: min(410px, calc(100% - 2 * var(--space-2)));
+              }
+
+              .tree-side-panel {
+                right: var(--space-2);
+                top: var(--space-2);
+                bottom: var(--space-2);
+                width: min(360px, calc(100% - 2 * var(--space-2)));
               }
             }
 
@@ -3070,6 +3260,21 @@ function TreeFlow() {
               }
 
               .tree-controls-grid {
+                grid-template-columns: 1fr;
+              }
+
+              .tree-side-panel {
+                left: var(--space-2);
+                right: var(--space-2);
+                width: auto;
+                max-height: calc(100vh - 2 * var(--space-2));
+              }
+
+              .tree-side-header {
+                flex-direction: column;
+              }
+
+              .tree-side-tabs {
                 grid-template-columns: 1fr;
               }
             }
@@ -3389,25 +3594,11 @@ function TreeFlow() {
 
       {/* ─── Interactive Side Panel ────────────────── */}
       {showSelectionPanel && selectedPerson && (
-        <aside style={{
-          position: 'absolute',
-          top: overlayTopOffset,
-          right: 'var(--space-3)',
-          bottom: 'var(--space-3)',
-          width: 'min(430px, calc(100vw - 2 * var(--space-3)))',
-          zIndex: 14,
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-xl)',
-          background: 'var(--color-surface-glass)',
-          backdropFilter: 'blur(14px)',
-          boxShadow: 'var(--shadow-lg)',
-          overflowY: 'auto',
-          padding: 'var(--space-3)',
-        }}>
-          <div className="glass-card" style={{ padding: 'var(--space-3)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)', alignItems: 'flex-start' }}>
+        <aside className="tree-side-panel">
+          <div className="tree-side-shell glass-card">
+            <div className="tree-side-header">
               <div>
-                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                <div className="tree-side-eyebrow">
                   Personne sélectionnée
                 </div>
                 <h3 style={{ marginTop: 'var(--space-1)', marginBottom: 'var(--space-1)' }}>{selectedPersonName || 'Sans nom'}</h3>
@@ -3418,7 +3609,7 @@ function TreeFlow() {
                   {selectedPersonNormalized?.birthPlace ? ` · ${selectedPersonNormalized.birthPlace}` : ''}
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 'var(--space-1)' }}>
+              <div className="tree-side-header-actions">
                 <button
                   className="btn btn-ghost"
                   style={{ padding: 'var(--space-1) var(--space-2)' }}
@@ -3432,7 +3623,7 @@ function TreeFlow() {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
+            <div className="tree-side-tabs">
               <button className={`btn ${sidePanelTab === 'SUMMARY' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setSidePanelTab('SUMMARY')}>
                 Résumé
               </button>
@@ -3445,7 +3636,7 @@ function TreeFlow() {
             </div>
 
             {sidePanelTab === 'SUMMARY' && (
-              <div style={{ marginTop: 'var(--space-3)', display: 'grid', gap: 'var(--space-3)' }}>
+              <div className="tree-side-tab-content" style={{ display: 'grid', gap: 'var(--space-3)' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
                   <button className="btn btn-secondary" onClick={goToPersonDetails}>
                     Voir fiche
@@ -3530,7 +3721,7 @@ function TreeFlow() {
             )}
 
             {sidePanelTab === 'EDIT' && (
-              <div style={{ marginTop: 'var(--space-4)', padding: 'var(--space-3)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--color-bg-primary)' }}>
+              <div className="tree-side-tab-content" style={{ padding: 'var(--space-3)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--color-bg-primary)' }}>
                 <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
                   Édition généalogique
                 </div>
@@ -3598,11 +3789,21 @@ function TreeFlow() {
 
                     <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
                       <label className="input-label">Action</label>
-                      <select className="input" value={linkMode} onChange={(e) => { setLinkMode(e.target.value as LinkMode); clearActionState(); }}>
+                      <select
+                        className="input"
+                        value={linkMode}
+                        disabled={linkTarget === 'standalone'}
+                        onChange={(e) => { setLinkMode(e.target.value as LinkMode); clearActionState(); }}
+                      >
                         <option value="PARENT">Ajouter un parent</option>
                         <option value="CHILD">Ajouter un enfant</option>
                         <option value="SPOUSE">Ajouter un conjoint</option>
                       </select>
+                      {linkTarget === 'standalone' && (
+                        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>
+                          Mode indépendant: la personne sera créée sans relation immédiate.
+                        </div>
+                      )}
                     </div>
 
                     <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
@@ -3610,10 +3811,11 @@ function TreeFlow() {
                       <select className="input" value={linkTarget} onChange={(e) => { setLinkTarget(e.target.value as LinkTarget); clearActionState(); }}>
                         <option value="new">Créer une nouvelle personne</option>
                         <option value="existing">Lier une personne existante</option>
+                        <option value="standalone">Créer une personne indépendante</option>
                       </select>
                     </div>
 
-                    {linkMode !== 'SPOUSE' && (
+                    {linkTarget !== 'standalone' && linkMode !== 'SPOUSE' && (
                       <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
                         <label className="input-label">Type de filiation</label>
                         <select className="input" value={relationshipType} onChange={(e) => setRelationshipType(e.target.value)}>
@@ -3624,7 +3826,7 @@ function TreeFlow() {
                       </div>
                     )}
 
-                    {linkMode === 'SPOUSE' && (
+                    {linkTarget !== 'standalone' && linkMode === 'SPOUSE' && (
                       <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
                         <label className="input-label">Type d'union</label>
                         <select className="input" value={unionType} onChange={(e) => setUnionType(e.target.value)}>
@@ -3653,7 +3855,7 @@ function TreeFlow() {
                       </div>
                     )}
 
-                    {linkMode === 'CHILD' && (
+                    {linkTarget !== 'standalone' && linkMode === 'CHILD' && (
                       <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
                         <label className="input-label">Contexte familial de l&apos;enfant</label>
                         <select
@@ -3679,7 +3881,7 @@ function TreeFlow() {
                       </div>
                     )}
 
-                    {linkMode === 'PARENT' && parentOptionsForUnion.length > 0 && (
+                    {linkTarget !== 'standalone' && linkMode === 'PARENT' && parentOptionsForUnion.length > 0 && (
                       <div className="input-group" style={{ marginTop: 'var(--space-2)' }}>
                         <label className="input-label">Union parentale à créer (optionnel)</label>
                         <select
@@ -3703,7 +3905,7 @@ function TreeFlow() {
                       </div>
                     )}
 
-                    {linkMode === 'CHILD' && !selectedChildUnion && (
+                    {linkTarget !== 'standalone' && linkMode === 'CHILD' && !selectedChildUnion && (
                       <div
                         style={{
                           marginTop: 'var(--space-3)',
@@ -3738,7 +3940,7 @@ function TreeFlow() {
                       </div>
                     )}
 
-                    {linkTarget === 'new' && (
+                    {(linkTarget === 'new' || linkTarget === 'standalone') && (
                       <div style={{ marginTop: 'var(--space-3)', display: 'grid', gap: 'var(--space-2)' }}>
                         <input
                           className="input"
@@ -3782,7 +3984,11 @@ function TreeFlow() {
                         />
 
                         <button className="btn btn-primary" onClick={createAndAttachNewPerson} disabled={actionBusy}>
-                          {actionBusy ? 'Traitement...' : selectedPersonLabel}
+                          {actionBusy
+                            ? 'Traitement...'
+                            : linkTarget === 'standalone'
+                              ? 'Créer une personne indépendante'
+                              : selectedPersonLabel}
                         </button>
                       </div>
                     )}
@@ -3831,19 +4037,19 @@ function TreeFlow() {
             )}
 
             {actionError && (
-              <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-2) var(--space-3)', border: '1px solid var(--color-rose)', borderRadius: 'var(--radius-md)', color: 'var(--color-rose)', background: 'var(--color-rose-subtle)', fontSize: 'var(--text-xs)' }}>
+              <div className="tree-side-alert tree-side-alert--error">
                 {actionError}
               </div>
             )}
 
             {actionSuccess && (
-              <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-2) var(--space-3)', border: '1px solid var(--color-emerald)', borderRadius: 'var(--radius-md)', color: 'var(--color-emerald)', background: 'var(--color-emerald-subtle)', fontSize: 'var(--text-xs)' }}>
+              <div className="tree-side-alert tree-side-alert--success">
                 {actionSuccess}
               </div>
             )}
 
             {sidePanelTab === 'HISTORY' && (
-              <div style={{ marginTop: 'var(--space-4)', padding: 'var(--space-3)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--color-bg-primary)' }}>
+              <div className="tree-side-tab-content" style={{ padding: 'var(--space-3)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--color-bg-primary)' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)', marginBottom: 'var(--space-3)' }}>
                   <button className="btn btn-ghost" disabled={!canUndo || actionBusy} onClick={undoLastAction}>
                     Annuler
