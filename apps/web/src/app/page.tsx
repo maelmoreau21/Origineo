@@ -69,11 +69,20 @@ function CoupleHorizontalEdge({
   const labelText = typeof label === 'string' || typeof label === 'number' ? label : null;
   const labelX = (sourceX + targetX) / 2;
 
-  const path = [
-    `M ${sourceX},${sourceBottomY} L ${sourceX},${coupleY}`,
-    `M ${targetX},${targetBottomY} L ${targetX},${coupleY}`,
-    `M ${sourceX},${coupleY} L ${targetX},${coupleY}`,
-  ].join(' ');
+  const dx = targetX - sourceX;
+  let path = '';
+  if (dx === 0) {
+    path = `M ${sourceX},${sourceBottomY} L ${sourceX},${targetBottomY}`;
+  } else {
+    const dirX = Math.sign(dx);
+    const r = Math.min(12, Math.abs(dx) / 2, Math.abs(coupleY - sourceBottomY), Math.abs(coupleY - targetBottomY));
+    path = `M ${sourceX},${sourceBottomY} ` +
+      `L ${sourceX},${coupleY - r} ` +
+      `Q ${sourceX},${coupleY} ${sourceX + r * dirX},${coupleY} ` +
+      `L ${targetX - r * dirX},${coupleY} ` +
+      `Q ${targetX},${coupleY} ${targetX},${coupleY - r} ` +
+      `L ${targetX},${targetBottomY}`;
+  }
 
   return (
     <>
@@ -116,8 +125,28 @@ function OrthogonalDescendantEdge({
 }: EdgeProps) {
   const startX = typeof data?.sourceCoupleX === 'number' ? data.sourceCoupleX : sourceX;
   const startY = typeof data?.sourceCoupleY === 'number' ? data.sourceCoupleY : sourceY;
+  
+  const dx = targetX - startX;
+  // Fix "décalage": if nodes are almost perfectly aligned vertically, snap them to a straight line
+  const effectiveTargetX = Math.abs(dx) < 15 ? startX : targetX;
+  const effectiveDx = effectiveTargetX - startX;
+  
   const preTargetY = Math.max(startY + 12, targetY - CHILD_ORTHOGONAL_PRE_TARGET_GAP);
-  const path = `M ${startX},${startY} L ${startX},${preTargetY} L ${targetX},${preTargetY} L ${targetX},${targetY}`;
+  
+  let path = '';
+  if (effectiveDx === 0) {
+    path = `M ${startX},${startY} L ${startX},${targetY}`;
+  } else {
+    const dirX = Math.sign(effectiveDx);
+    const r = Math.min(16, Math.abs(effectiveDx) / 2, Math.abs(preTargetY - startY) / 2, Math.abs(targetY - preTargetY) / 2);
+    
+    path = `M ${startX},${startY} ` +
+           `L ${startX},${preTargetY - r} ` +
+           `Q ${startX},${preTargetY} ${startX + r * dirX},${preTargetY} ` +
+           `L ${effectiveTargetX - r * dirX},${preTargetY} ` +
+           `Q ${effectiveTargetX},${preTargetY} ${effectiveTargetX},${preTargetY + r} ` +
+           `L ${effectiveTargetX},${targetY}`;
+  }
 
   return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
 }
