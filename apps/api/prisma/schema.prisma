@@ -68,8 +68,21 @@ model Person {
   deathPlace    String?   @map("death_place")
   professions   String[]  @default([])
   notes         String?   @db.Text
-  isRootDefault Boolean   @default(false) @map("is_root_default")
+  // Nouveaux champs professionnels (Heredis-like)
+  nickname            String?
+  title               String?
+  baptismDate         DateTime? @map("baptism_date") @db.Date
+  baptismPlace        String?   @map("baptism_place")
+  burialDate          DateTime? @map("burial_date") @db.Date
+  burialPlace         String?   @map("burial_place")
+  deathCause          String?   @map("death_cause")
+  religion            String?
+  physicalDescription String?   @map("physical_description") @db.Text
+  nationality         String?
+  education           String?
+  residences          String[]  @default([])
 
+  isRootDefault Boolean   @default(false) @map("is_root_default")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

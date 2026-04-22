@@ -1,4 +1,6 @@
-'use client';
+const fs = require('fs');
+
+const content = `'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { personApi, documentApi, unionApi, relationshipApi } from '@/lib/api';
 
@@ -35,7 +37,7 @@ function fmt(p:any){
     residences:p.residences??[],
   };
 }
-function dn(p:any){if(!p)return'';const n=fmt(p);const s=n.usageSurname||n.birthSurname||'';return`${n.givenNames}${s?` ${s}`:''}`.trim();}
+function dn(p:any){if(!p)return'';const n=fmt(p);const s=n.usageSurname||n.birthSurname||'';return\`\${n.givenNames}\${s?\` \${s}\`:''}\`.trim();}
 function initials(p:any){const n=fmt(p);const parts=[n.givenNames,n.usageSurname||n.birthSurname||''].filter(Boolean);return parts.map(s=>s[0]).join('').toUpperCase().slice(0,2);}
 function fdate(v:string|null){if(!v)return null;try{return new Date(v).toLocaleDateString('fr-FR');}catch{return v;}}
 
@@ -110,8 +112,8 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
         physicalDescription:p.physicalDescription||'',
         nationality:p.nationality||'',
         education:p.education||'',
-        residences:p.residences?.join('\n')||'',
-        professions:p.professions?.join('\n')||'',
+        residences:p.residences?.join('\\n')||'',
+        professions:p.professions?.join('\\n')||'',
         notes:p.notes||'',
       });
     }
@@ -141,8 +143,8 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
         physicalDescription:editForm.physicalDescription.trim()||undefined,
         nationality:editForm.nationality.trim()||undefined,
         education:editForm.education.trim()||undefined,
-        residences:editForm.residences.split('\n').map((s:string)=>s.trim()).filter(Boolean),
-        professions:editForm.professions.split('\n').map((s:string)=>s.trim()).filter(Boolean),
+        residences:editForm.residences.split('\\n').map((s:string)=>s.trim()).filter(Boolean),
+        professions:editForm.professions.split('\\n').map((s:string)=>s.trim()).filter(Boolean),
         notes:editForm.notes.trim()||undefined,
       },token);
       setEditing(false);
@@ -168,7 +170,7 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
   },[token]);
 
   const handleDeletePerson=useCallback(async()=>{
-    if(!personId||!token||!confirm(`Supprimer ${dn(person)} ?`))return;
+    if(!personId||!token||!confirm(\`Supprimer \${dn(person)} ?\`))return;
     try{await personApi.delete(personId,token);onClose();onPersonUpdated();}
     catch(e:any){alert(e.message||'Erreur');}
   },[personId,token,person,onClose,onPersonUpdated]);
@@ -198,24 +200,24 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
             {isAdmin&&<div className="tpp-avatar-overlay">📷</div>}
           </div>
           {isAdmin&&<input ref={profileRef} type="file" accept="image/*" style={{display:'none'}} onChange={handleProfileUpload}/>}
-          <h3 className="tpp-name">{p.title?`${p.title} `:''}{dn(p)}</h3>
-          {p.nickname && <div style={{fontSize:'0.75rem',color:'var(--color-text-muted)',fontStyle:'italic'}}>dit "${p.nickname}"</div>}
+          <h3 className="tpp-name">{p.title?\`\${p.title} \`:''}{dn(p)}</h3>
+          {p.nickname && <div style={{fontSize:'0.75rem',color:'var(--color-text-muted)',fontStyle:'italic'}}>dit "\${p.nickname}"</div>}
           <div className="tpp-meta">
             <span style={{color:genderColor}}>{p.gender==='MALE'?'♂ Homme':p.gender==='FEMALE'?'♀ Femme':'◯ Inconnu'}</span>
             {p.birthDate&&<span>· Né{p.gender==='FEMALE'?'e':''} le {fdate(p.birthDate)}</span>}
           </div>
           <div className="tpp-actions">
             <button className="tpp-btn tpp-btn-accent" onClick={onCenterOnPerson}>🎯 Centrer</button>
-            <button className="tpp-btn" onClick={()=>window.location.href=`/person/${personId}`}>📋 Fiche</button>
+            <button className="tpp-btn" onClick={()=>window.location.href=\`/person/\${personId}\`}>📋 Fiche</button>
             <button className="tpp-btn tpp-btn-close" onClick={onClose}>✕</button>
           </div>
         </div>
 
         {/* Tabs */}
         <div className="tpp-tabs">
-          <button className={`tpp-tab${tab==='INFO'?' tpp-tab-active':''}`} onClick={()=>setTab('INFO')}>Informations</button>
-          <button className={`tpp-tab${tab==='FAMILY'?' tpp-tab-active':''}`} onClick={()=>setTab('FAMILY')}>Famille & Unions</button>
-          <button className={`tpp-tab${tab==='DOCS'?' tpp-tab-active':''}`} onClick={()=>setTab('DOCS')}>Documents</button>
+          <button className={\`tpp-tab\${tab==='INFO'?' tpp-tab-active':''}\`} onClick={()=>setTab('INFO')}>Informations</button>
+          <button className={\`tpp-tab\${tab==='FAMILY'?' tpp-tab-active':''}\`} onClick={()=>setTab('FAMILY')}>Famille & Unions</button>
+          <button className={\`tpp-tab\${tab==='DOCS'?' tpp-tab-active':''}\`} onClick={()=>setTab('DOCS')}>Documents</button>
         </div>
 
         <div className="tpp-content">
@@ -230,11 +232,11 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
                   {(p.nickname||p.title)&&<div style={{display:'flex',gap:10}}><Field label="Surnom" value={p.nickname}/><Field label="Titre" value={p.title}/></div>}
                   
                   <div className="tpp-sub-title" style={{marginTop:12}}>Événements</div>
-                  <Field label="Naissance" value={p.birthDate?`${fdate(p.birthDate)}${p.birthPlace?` — ${p.birthPlace}`:''}`:'—'}/>
-                  {(p.baptismDate||p.baptismPlace)&&<Field label="Baptême" value={`${fdate(p.baptismDate)||'—'} ${p.baptismPlace?` — ${p.baptismPlace}`:''}`}/>}
-                  <Field label="Décès" value={p.deathDate?`${fdate(p.deathDate)}${p.deathPlace?` — ${p.deathPlace}`:''}`:'—'}/>
+                  <Field label="Naissance" value={p.birthDate?\`\${fdate(p.birthDate)}\${p.birthPlace?\` — \${p.birthPlace}\`:''}\`:'—'}/>
+                  {(p.baptismDate||p.baptismPlace)&&<Field label="Baptême" value={\`\${fdate(p.baptismDate)||'—'} \${p.baptismPlace?\` — \${p.baptismPlace}\`:''}\`}/>}
+                  <Field label="Décès" value={p.deathDate?\`\${fdate(p.deathDate)}\${p.deathPlace?\` — \${p.deathPlace}\`:''}\`:'—'}/>
                   {p.deathCause&&<Field label="Cause du décès" value={p.deathCause}/>}
-                  {(p.burialDate||p.burialPlace)&&<Field label="Inhumation" value={`${fdate(p.burialDate)||'—'} ${p.burialPlace?` — ${p.burialPlace}`:''}`}/>}
+                  {(p.burialDate||p.burialPlace)&&<Field label="Inhumation" value={\`\${fdate(p.burialDate)||'—'} \${p.burialPlace?\` — \${p.burialPlace}\`:''}\`}/>}
 
                   <div className="tpp-sub-title" style={{marginTop:12}}>Détails personnels</div>
                   {p.nationality&&<Field label="Nationalité" value={p.nationality}/>}
@@ -404,7 +406,7 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
         </div>
       </div>
     </aside>
-    <style>{`
+    <style>{\`
       .tpp{position:absolute;top:var(--space-3);right:var(--space-3);bottom:var(--space-3);width:min(380px,calc(100% - 2*var(--space-3)));z-index:14;}
       .tpp-inner{height:100%;overflow-y:auto;display:flex;flex-direction:column;background:rgba(14,17,23,0.95);border:1px solid hsla(220,20%,28%,0.5);border-radius:16px;box-shadow:0 8px 32px hsla(220,40%,4%,0.5);backdrop-filter:blur(16px);}
       .tpp-inner::-webkit-scrollbar{width:6px;}.tpp-inner::-webkit-scrollbar-thumb{background:hsla(200,15%,50%,0.3);border-radius:99px;}
@@ -467,7 +469,7 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
       .tpp-doc-cat{font-size:0.6rem;color:var(--color-text-muted);}
       .tpp-doc-actions{display:flex;gap:4px;}
       @media(max-width:900px){.tpp{left:var(--space-2);right:var(--space-2);width:auto;}}
-    `}</style>
+    \`}</style>
   </>);
 }
 
@@ -497,3 +499,7 @@ function DocCard({doc,canDelete,onDelete}:{doc:any;canDelete:boolean;onDelete:(i
     </div>
   );
 }
+`;
+
+fs.writeFileSync('apps/web/src/components/tree/TreePersonPanel.tsx', content);
+console.log('TreePersonPanel fully upgraded.');

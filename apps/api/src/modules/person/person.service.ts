@@ -180,6 +180,18 @@ export class PersonService {
         deathPlace: dto.deathPlace,
         professions: dto.professions || [],
         notes: dto.notes,
+        nickname: dto.nickname,
+        title: dto.title,
+        baptismDate: dto.baptismDate ? new Date(dto.baptismDate) : null,
+        baptismPlace: dto.baptismPlace,
+        burialDate: dto.burialDate ? new Date(dto.burialDate) : null,
+        burialPlace: dto.burialPlace,
+        deathCause: dto.deathCause,
+        religion: dto.religion,
+        physicalDescription: dto.physicalDescription,
+        nationality: dto.nationality,
+        education: dto.education,
+        residences: dto.residences || [],
         isRootDefault: dto.isRootDefault || false,
       },
     });
@@ -298,6 +310,18 @@ export class PersonService {
     if (dto.deathPlace !== undefined) data.deathPlace = dto.deathPlace;
     if (dto.professions !== undefined) data.professions = dto.professions;
     if (dto.notes !== undefined) data.notes = dto.notes;
+    if (dto.nickname !== undefined) data.nickname = dto.nickname;
+    if (dto.title !== undefined) data.title = dto.title;
+    if (dto.baptismDate !== undefined) data.baptismDate = dto.baptismDate ? new Date(dto.baptismDate) : null;
+    if (dto.baptismPlace !== undefined) data.baptismPlace = dto.baptismPlace;
+    if (dto.burialDate !== undefined) data.burialDate = dto.burialDate ? new Date(dto.burialDate) : null;
+    if (dto.burialPlace !== undefined) data.burialPlace = dto.burialPlace;
+    if (dto.deathCause !== undefined) data.deathCause = dto.deathCause;
+    if (dto.religion !== undefined) data.religion = dto.religion;
+    if (dto.physicalDescription !== undefined) data.physicalDescription = dto.physicalDescription;
+    if (dto.nationality !== undefined) data.nationality = dto.nationality;
+    if (dto.education !== undefined) data.education = dto.education;
+    if (dto.residences !== undefined) data.residences = dto.residences;
     if (dto.isRootDefault !== undefined)
       data.isRootDefault = dto.isRootDefault;
 

@@ -70,6 +70,68 @@ export class CreatePersonDto {
   @IsString()
   notes?: string;
 
+  // ─── Nouveaux champs professionnels (Heredis-like) ───
+  @ApiPropertyOptional({ example: 'Le Grand' })
+  @IsOptional()
+  @IsString()
+  nickname?: string;
+
+  @ApiPropertyOptional({ example: 'Dr.' })
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiPropertyOptional({ example: '1950-04-01' })
+  @IsOptional()
+  @IsDateString()
+  baptismDate?: string;
+
+  @ApiPropertyOptional({ example: 'Cathédrale Notre-Dame' })
+  @IsOptional()
+  @IsString()
+  baptismPlace?: string;
+
+  @ApiPropertyOptional({ example: '2020-11-05' })
+  @IsOptional()
+  @IsDateString()
+  burialDate?: string;
+
+  @ApiPropertyOptional({ example: 'Cimetière du Père Lachaise' })
+  @IsOptional()
+  @IsString()
+  burialPlace?: string;
+
+  @ApiPropertyOptional({ example: 'Crise cardiaque' })
+  @IsOptional()
+  @IsString()
+  deathCause?: string;
+
+  @ApiPropertyOptional({ example: 'Catholique' })
+  @IsOptional()
+  @IsString()
+  religion?: string;
+
+  @ApiPropertyOptional({ example: 'Yeux bleus, cheveux bruns, 1m80' })
+  @IsOptional()
+  @IsString()
+  physicalDescription?: string;
+
+  @ApiPropertyOptional({ example: 'Française' })
+  @IsOptional()
+  @IsString()
+  nationality?: string;
+
+  @ApiPropertyOptional({ example: 'Doctorat en Histoire' })
+  @IsOptional()
+  @IsString()
+  education?: string;
+
+  @ApiPropertyOptional({ example: ['12 rue des Prés, Lyon', 'Paris'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  residences?: string[];
+
   @ApiPropertyOptional({ default: false })
   @IsOptional()
   @IsBoolean()
