@@ -191,6 +191,75 @@ export class DocumentService {
     });
   }
 
+  /**
+   * Upload a profile photo for a person.
+   * Automatically renames the file to `profile.{ext}` and removes any previous profile photo.
+   */
+  async uploadProfilePhoto(personId: string, file: Express.Multer.File) {
+    const person = await this.prisma.person.findUnique({ where: { id: personId } });
+    if (!person) throw new NotFoundException(`Person "${personId}" not found`);
+
+    const folderPath = path.join(STORAGE_ROOT, 'persons', personId);
+    this.ensureDir(folderPath);
+
+    // Remove any existing profile photo
+    this.removeExistingProfilePhotos(folderPath);
+
+    // Save with normalized name
+    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+    const profileFileName = `profile${ext}`;
+    const filePath = path.join(folderPath, profileFileName);
+
+    fs.writeFileSync(filePath, file.buffer);
+    this.logger.log(`Profile photo saved: ${filePath}`);
+
+    return {
+      personId,
+      filename: profileFileName,
+      storagePath: `persons/${personId}/${profileFileName}`,
+    };
+  }
+
+  /**
+   * Get the absolute file path for a person's profile photo.
+   */
+  getProfilePhotoPath(personId: string): { absolutePath: string; filename: string } | null {
+    const folderPath = path.join(STORAGE_ROOT, 'persons', personId);
+    if (!fs.existsSync(folderPath)) return null;
+
+    const files = fs.readdirSync(folderPath);
+    const profileFile = files.find((name) => name.startsWith('profile.'));
+    if (!profileFile) return null;
+
+    return {
+      absolutePath: path.join(folderPath, profileFile),
+      filename: profileFile,
+    };
+  }
+
+  /**
+   * Check if a person has a profile photo.
+   */
+  hasProfilePhoto(personId: string): boolean {
+    return this.getProfilePhotoPath(personId) !== null;
+  }
+
+  /**
+   * Remove existing profile photos from a folder.
+   */
+  private removeExistingProfilePhotos(folderPath: string) {
+    if (!fs.existsSync(folderPath)) return;
+
+    const files = fs.readdirSync(folderPath);
+    for (const file of files) {
+      if (file.startsWith('profile.')) {
+        const filePath = path.join(folderPath, file);
+        fs.unlinkSync(filePath);
+        this.logger.log(`Removed old profile photo: ${filePath}`);
+      }
+    }
+  }
+
   // ─── Utility ────────────────────────────
   private ensureDir(dirPath: string) {
     if (!fs.existsSync(dirPath)) {

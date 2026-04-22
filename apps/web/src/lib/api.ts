@@ -459,5 +459,32 @@ export const documentApi = {
       method: 'DELETE',
       token,
     }),
+
+  uploadProfilePhoto: async (personId: string, file: File, token: string) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(
+      `${API_BASE}/api/documents/profile-photo/${personId}`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Upload failed' }));
+      throw new Error(error.message);
+    }
+
+    return response.json();
+  },
+
+  profilePhotoUrl: (personId: string) =>
+    `${API_BASE}/api/documents/profile-photo/${personId}`,
+
+  hasProfilePhoto: (personId: string) =>
+    apiFetch<any>(`/documents/profile-photo/${personId}/exists`),
 };
 

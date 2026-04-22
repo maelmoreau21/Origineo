@@ -145,4 +145,66 @@ export class DocumentController {
       data: await this.documentService.remove(id),
     };
   }
+
+  @Post('profile-photo/:personId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload or replace a profile photo for a person' })
+  async uploadProfilePhoto(
+    @Param('personId', ParseUUIDPipe) personId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    return {
+      success: true,
+      data: await this.documentService.uploadProfilePhoto(personId, file),
+    };
+  }
+
+  @Get('profile-photo/:personId')
+  @ApiOperation({ summary: 'View profile photo for a person (inline)' })
+  async viewProfilePhoto(
+    @Param('personId', ParseUUIDPipe) personId: string,
+    @Res() res: Response,
+  ) {
+    const result = this.documentService.getProfilePhotoPath(personId);
+    if (!result) {
+      res.status(404).json({ message: 'No profile photo found' });
+      return;
+    }
+
+    const ext = result.filename.split('.').pop()?.toLowerCase() || 'jpg';
+    const mimeMap: Record<string, string> = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      webp: 'image/webp',
+      gif: 'image/gif',
+      svg: 'image/svg+xml',
+    };
+
+    res.setHeader('Content-Type', mimeMap[ext] || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${result.filename}"`);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.sendFile(result.absolutePath);
+  }
+
+  @Get('profile-photo/:personId/exists')
+  @ApiOperation({ summary: 'Check if a person has a profile photo' })
+  async hasProfilePhoto(@Param('personId', ParseUUIDPipe) personId: string) {
+    return {
+      success: true,
+      data: { hasPhoto: this.documentService.hasProfilePhoto(personId) },
+    };
+  }
 }
