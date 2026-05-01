@@ -1,7 +1,7 @@
 # Origineo - Project Memory (Memoire IA)
 
 > Ce fichier sert de référence exhaustive pour l'IA lors de toute interaction future sur le projet Origineo.
-> Derniere mise a jour : 2026-05-01 (Phase 4 - Workspace arbre professionnel, liens multi-unions + GEDCOM jobs)
+> Derniere mise a jour : 2026-05-01 (Phase 4 - Workspace arbre sobre, centrage stable + qualite genealogique)
 > Source de verite : ce fichier uniquement. Ne pas creer de doublon racine `instructions.md`.
 
 ## ⚠️ Règle Cruciale : Commits & Git
@@ -301,10 +301,15 @@ Origineo/
 - **Prisma** : PrismaService global (singleton + driver adapter pg), raw SQL pour CTE/pg_trgm
 - **Fichiers** : Stockage local dans dossiers UUID. Limite upload : 20 MB
 - **GEDCOM Merge** : Les nouveaux workflows passent par `GedcomJob` persiste + staging pagine. Les routes historiques restent disponibles comme compatibilite.
-- **UX Prioritaire (Workspace arbre)** : Toutes les mutations principales doivent rester accessibles depuis l'ecran d'arbre : ajouter parent/enfant/conjoint, modifier fiche, importer/fusionner GEDCOM, rattacher un composant, supprimer personne/branche, exporter branche, gerer documents personne et documents union.
+- **UX Prioritaire (Workspace arbre)** : Le workspace principal doit rester un ecran simple d'exploration et d'edition courante : recherche, vue, centrage, fiche personne, unions, documents, ajout de proches. Les workflows lourds (`Import GEDCOM`, `Export`, `Fusion`, maintenance) vivent dans `/tree-settings?tab=gedcom` ou `/tree-settings?tab=maintenance`, accessibles via un bouton `Gestion`.
 - **Visualisation** : Le rendu principal n'utilise plus React Flow/Dagre. Utiliser `apps/web/src/lib/family-layout` (format `{ id, data, rels }` inspire `donatso/family-chart`) avec conjoints alignes, enfants groupes par union/coparent, bus parent-enfant par midpoint de couple et chemins SVG propres.
-- **Interaction arbre** : clic simple sur une carte = selection et mise a jour de `PersonInspector`; double-clic = ouverture de `/person/{id}`; recentrage via le bouton `Centrer` de l'inspecteur.
-- **Controle qualite genealogique** : l'inspecteur doit signaler les cas ambigus visibles (coparent sans union reelle, enfant avec plus de deux parents, parent unique dans la fenetre active).
+- **Interaction arbre** : clic simple sur une carte = selection et mise a jour de `PersonInspector`; double-clic = ouverture de `/person/{id}`; recentrage via le bouton `Centrer` de l'inspecteur. Le centrage utilise un repere canvas `left: 0; top: 0`, calcule la position reelle du noeud dans le viewport et les controles zoom affichent `-`, pourcentage, `+`, `Ajuster`.
+- **Controle qualite genealogique** : l'inspecteur doit signaler les cas ambigus visibles (coparent sans union reelle, enfant avec plus de deux parents, parent unique dans la fenetre active) et proposer les corrections simples possibles, comme creer une union reelle pour un coparent deduit.
+- **Liens enfants/fratrie** : un enfant avec deux parents reels doit toujours etre rattache au midpoint du couple correspondant, meme si l'union est inferee. Ne jamais degrader un frere/une soeur a un lien parent-seul lorsque deux parents sont connus.
+- **Demi-fratries multi-unions** : quand un parent a des enfants avec plusieurs conjoints/coparents, espacer les conjoints et aligner chaque groupe d'enfants sous le bus de son union. Les enfants du meme pere mais de meres differentes doivent etre visuellement separes par couple.
+- **Import GEDCOM** : le mode import simple doit etre une action directe (`Importer maintenant`) : creation du job, application, reparation/selection d'une racine utilisable, puis rechargement de l'arbre. Le mode fusion reste une analyse/revue separee.
+- **Ordre inspecteur** : `PersonInspector` affiche d'abord les informations essentielles, puis unions/enfants, documents, edition, ajout de proches, et seulement en bas une zone danger pour suppression personne/descendance.
+- **Suppression workspace** : la zone danger doit proposer clairement `Personne seule`, `Personne + descendants` et `Descendants seulement`. La suppression personne seule coupe les liens directs et peut laisser des composants separes; ce comportement est accepte et doit rester explicite.
 
 ---
 
@@ -392,10 +397,12 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 - **Stockage million-scale** : champs/index normalises sur Person (`givenNamesNormalized`, `surnameNormalized`, `primaryNameNormalized`, `birthYear`, `deathYear`) + trigram.
 - **GEDCOM jobs** : `GedcomJob`, staging personnes/familles, candidats pagines, application batch, `.ged` et `.gedcom`.
 - **Simulation suppression branche** : `DELETE /api/persons/:id/branch?simulate=true` retourne personnes/relations/unions/documents avant confirmation.
-- **Workspace frontend** : `TreeWorkspace`, `TreeCanvas`, `TreeToolbar`, `PersonInspector`, `GedcomImportDrawer`, `MergeReviewDrawer`, `BranchDeleteDialog`.
+- **Workspace frontend** : `TreeWorkspace`, `TreeCanvas`, `TreeToolbar`, `PersonInspector`, `BranchDeleteDialog`. Les drawers GEDCOM ne doivent pas etre dans le header du workspace; pointer vers la page de gestion dediee.
 - **Layout visuel** : moteur SVG maison inspire de `donatso/family-chart` (MIT) : conjoints alignes, enfants groupes par union, bus parent-enfant depuis le midpoint du couple, coparents inferes si l'union manque, chemins courbes, fenetre navigable.
 - **Interaction workspace** : clic simple selectionne et rafraichit l'inspecteur; double-clic ouvre la fiche profil; le bouton `Centrer` garde le recentrage sur une personne.
 - **Documents dans le workspace** : `PersonInspector` expose documents individuels et documents de chaque union reelle avec upload, telechargement, visualisation et suppression selon role.
+- **Import et racine** : apres un import GEDCOM, le workspace repare ou choisit une racine par defaut automatiquement; si aucune racine n'existe mais des personnes existent, utiliser une personne disponible comme point d'entree.
+- **Style workspace** : interface sobre et professionnelle, cartes plates, bordures fines, peu d'ombres, pas de boutons cryptiques ni d'actions destructrices en premier ecran.
 
 ### Phase 5 (Prochaine)
 - Rattachement complet de composants depuis le workspace principal

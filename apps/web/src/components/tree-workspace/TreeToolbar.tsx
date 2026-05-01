@@ -13,7 +13,6 @@ type Props = {
   descendants: number;
   includeSiblings: boolean;
   includeSpouses: boolean;
-  hasToken: boolean;
   onSearchQueryChange: (value: string) => void;
   onSearch: () => void;
   onPickSearchResult: (personId: string) => void;
@@ -22,8 +21,6 @@ type Props = {
   onIncludeSiblingsChange: (value: boolean) => void;
   onIncludeSpousesChange: (value: boolean) => void;
   onRefresh: () => void;
-  onImport: (mode: 'import' | 'merge') => void;
-  onExport: () => void;
 };
 
 export default function TreeToolbar({
@@ -35,7 +32,6 @@ export default function TreeToolbar({
   descendants,
   includeSiblings,
   includeSpouses,
-  hasToken,
   onSearchQueryChange,
   onSearch,
   onPickSearchResult,
@@ -44,8 +40,6 @@ export default function TreeToolbar({
   onIncludeSiblingsChange,
   onIncludeSpousesChange,
   onRefresh,
-  onImport,
-  onExport,
 }: Props) {
   const stats = tree?.stats;
 
@@ -54,16 +48,27 @@ export default function TreeToolbar({
     onSearch();
   }
 
+  function applyViewPreset(
+    nextAncestors: number,
+    nextDescendants: number,
+    nextSiblings: boolean,
+    nextSpouses: boolean,
+  ) {
+    onAncestorsChange(nextAncestors);
+    onDescendantsChange(nextDescendants);
+    onIncludeSiblingsChange(nextSiblings);
+    onIncludeSpousesChange(nextSpouses);
+  }
+
   return (
     <header className={styles.toolbar}>
       <div className={styles.brand}>
-        <div className={styles.brandMark}>O</div>
         <div className={styles.brandText}>
-          <div className={styles.brandTitle}>Origineo Workspace</div>
+          <div className={styles.brandTitle}>Arbre genealogique</div>
           <div className={styles.brandMeta}>
             {stats
-              ? `${stats.visiblePersons} visibles / ${stats.totalCollectedPersons} collectees`
-              : 'Fenetre active million-scale'}
+              ? `${stats.visiblePersons} personnes visibles`
+              : 'Importez ou recherchez une personne'}
           </div>
         </div>
       </div>
@@ -76,7 +81,7 @@ export default function TreeToolbar({
           placeholder="Rechercher une personne, un lieu, une annee"
         />
         <button className={styles.searchButton} type="submit" title="Rechercher">
-          {searching ? '...' : 'Go'}
+          {searching ? '...' : 'Rechercher'}
         </button>
         {searchResults.length > 0 ? (
           <div className={styles.searchResults}>
@@ -98,73 +103,84 @@ export default function TreeToolbar({
       </form>
 
       <div className={styles.toolbarCluster}>
-        <div className={styles.controlGroup}>
-          <label className={styles.muted} htmlFor="ancestors">
-            Asc
-          </label>
-          <input
-            id="ancestors"
-            className={styles.smallInput}
-            type="number"
-            min={0}
-            max={12}
-            value={ancestors}
-            onChange={(event) => onAncestorsChange(Number(event.target.value))}
-          />
-          <label className={styles.muted} htmlFor="descendants">
-            Desc
-          </label>
-          <input
-            id="descendants"
-            className={styles.smallInput}
-            type="number"
-            min={0}
-            max={12}
-            value={descendants}
-            onChange={(event) => onDescendantsChange(Number(event.target.value))}
-          />
-        </div>
-
-        <div className={styles.controlGroup}>
-          <button
-            type="button"
-            className={`${styles.toggle} ${includeSiblings ? styles.toggleActive : ''}`}
-            onClick={() => onIncludeSiblingsChange(!includeSiblings)}
-          >
-            Fratrie
-          </button>
-          <button
-            type="button"
-            className={`${styles.toggle} ${includeSpouses ? styles.toggleActive : ''}`}
-            onClick={() => onIncludeSpousesChange(!includeSpouses)}
-          >
-            Conjoints
-          </button>
-        </div>
-      </div>
-
-      <div className={styles.toolbarCluster}>
-        <button className={styles.iconButton} type="button" onClick={onRefresh} title="Actualiser">
-          R
-        </button>
-        <button className={styles.button} type="button" onClick={onExport}>
-          Export
-        </button>
-        <button
-          className={styles.button}
-          type="button"
-          disabled={!hasToken}
-          onClick={() => onImport('import')}
-        >
-          Import GEDCOM
-        </button>
-        <button
-          className={`${styles.button} ${styles.primaryButton}`}
-          type="button"
-          disabled={!hasToken}
-          onClick={() => onImport('merge')}
-        >
-          Fusion
+        <a className={styles.button} href="/tree-settings?tab=gedcom">
+          Gestion
+        </a>
+        <details className={styles.viewMenu}>
+          <summary>Vue</summary>
+          <div className={styles.viewMenuPanel}>
+            <div className={styles.presetGrid}>
+              <button
+                type="button"
+                className={styles.presetButton}
+                onClick={() => applyViewPreset(2, 2, true, true)}
+              >
+                Famille proche
+              </button>
+              <button
+                type="button"
+                className={styles.presetButton}
+                onClick={() => applyViewPreset(8, 0, false, true)}
+              >
+                Ascendance
+              </button>
+              <button
+                type="button"
+                className={styles.presetButton}
+                onClick={() => applyViewPreset(0, 6, false, true)}
+              >
+                Descendance
+              </button>
+              <button
+                type="button"
+                className={styles.presetButton}
+                onClick={() => applyViewPreset(6, 6, true, true)}
+              >
+                Tout visible
+              </button>
+            </div>
+            <label className={styles.label} htmlFor="ancestors">
+              Ancetres
+              <input
+                id="ancestors"
+                className={styles.smallInput}
+                type="number"
+                min={0}
+                max={12}
+                value={ancestors}
+                onChange={(event) => onAncestorsChange(Number(event.target.value))}
+              />
+            </label>
+            <label className={styles.label} htmlFor="descendants">
+              Descendants
+              <input
+                id="descendants"
+                className={styles.smallInput}
+                type="number"
+                min={0}
+                max={12}
+                value={descendants}
+                onChange={(event) => onDescendantsChange(Number(event.target.value))}
+              />
+            </label>
+            <button
+              type="button"
+              className={`${styles.toggle} ${includeSiblings ? styles.toggleActive : ''}`}
+              onClick={() => onIncludeSiblingsChange(!includeSiblings)}
+            >
+              Fratrie
+            </button>
+            <button
+              type="button"
+              className={`${styles.toggle} ${includeSpouses ? styles.toggleActive : ''}`}
+              onClick={() => onIncludeSpousesChange(!includeSpouses)}
+            >
+              Conjoints
+            </button>
+          </div>
+        </details>
+        <button className={styles.button} type="button" onClick={onRefresh}>
+          Actualiser
         </button>
       </div>
     </header>

@@ -145,7 +145,7 @@ export function layoutFamilyTree(
 
   const linksById = new Map<string, FamilyTreeLink>();
   for (const node of nodes) {
-    for (const link of createLinks(node)) {
+    for (const link of createLinks(node, nodes)) {
       linksById.set(link.id, link);
     }
   }
@@ -560,11 +560,14 @@ function setupTid(nodes: FamilyTreeNode[]) {
   }
 }
 
-function createLinks(node: FamilyTreeNode): FamilyTreeLink[] {
+function createLinks(
+  node: FamilyTreeNode,
+  allNodes: FamilyTreeNode[],
+): FamilyTreeLink[] {
   const links: FamilyTreeLink[] = [];
   if (node.spouses || node.coparent) handleSpouseLinks(node, links);
   handleAncestryLink(node, links);
-  handleProgenyLinks(node, links);
+  handleProgenyLinks(node, links, allNodes);
   return links;
 }
 
@@ -621,39 +624,152 @@ function handleAncestryLink(node: FamilyTreeNode, links: FamilyTreeLink[]) {
   });
 }
 
-function handleProgenyLinks(node: FamilyTreeNode, links: FamilyTreeLink[]) {
+function handleProgenyLinks(
+  node: FamilyTreeNode,
+  links: FamilyTreeLink[],
+  allNodes: FamilyTreeNode[],
+) {
   if (!node.children || node.children.length === 0) return;
 
   for (const child of node.children) {
-    const otherParent =
-      node.spouses?.find((spouse) =>
-        (child.datum.rels.parents || []).includes(spouse.id),
-      ) || node;
-    const sx = otherParent.sx;
-    if (typeof sx !== 'number') continue;
+    const anchor = resolveProgenyAnchor(node, child, allNodes);
+    if (!anchor) continue;
 
-    const parentPoint = { x: sx, y: node.cy };
-    const points = verticalLink({ x: child.cx, y: child.cy }, parentPoint);
-    const hidden = child.hidden || (node.hidden && otherParent.hidden);
-    const parentIds = unique(child.datum.rels.parents || []);
+    const points = verticalLink({ x: child.cx, y: child.cy }, anchor.parentPoint);
+    const hidden = child.hidden || anchor.parents.every((parent) => parent.hidden);
     links.push({
-      id: linkId(child, node, otherParent),
-      type:
-        otherParent === node || otherParent.hidden
-          ? 'single-parent'
-          : 'parent-child',
+      id: linkId(child, ...anchor.parents),
+      type: anchor.type,
       points,
       path: createPath(points, true),
       curve: true,
       hidden,
-      fromId: node.id,
+      fromId: anchor.parentIds[0] || node.id,
       toId: child.id,
-      unionId: realUnionIdFor(node, otherParent),
-      unionKey: unionKeyForChild(child.datum, node.id),
-      parentIds,
+      unionId: anchor.unionId,
+      unionKey: anchor.unionKey,
+      parentIds: anchor.parentIds,
       childId: child.id,
     });
   }
+}
+
+function resolveProgenyAnchor(
+  node: FamilyTreeNode,
+  child: FamilyTreeNode,
+  allNodes: FamilyTreeNode[],
+) {
+  const parentIdsWithPlaceholders = unique(child.datum.rels.parents || []);
+  const parentIds = parentIdsWithPlaceholders.filter(
+    (id) => !isPlaceholderParentId(id),
+  );
+  const localCandidates = [node, ...(node.spouses || [])];
+  const visualParents = uniqueNodesById(
+    parentIdsWithPlaceholders
+      .map((parentId) =>
+        findVisualParentNode(parentId, localCandidates, allNodes, node),
+      )
+      .filter((parent): parent is FamilyTreeNode => Boolean(parent)),
+  );
+  const realVisualParents = visualParents.filter(
+    (parent) => !isPlaceholderParentId(parent.id),
+  );
+
+  if (parentIds.length >= 2 && realVisualParents.length >= 2) {
+    const orderedParents = orderParentNodesForLink(parentIds, realVisualParents);
+    const [p1, p2] = orderedParents;
+    const parentPoint = {
+      x: midpoint(p1.cx, p2.cx),
+      y: midpoint(p1.cy, p2.cy),
+    };
+
+    return {
+      parents: [p1, p2],
+      parentPoint,
+      parentIds,
+      type: 'parent-child' as const,
+      unionId: realUnionIdFor(p1, p2),
+      unionKey: unionKeyForParents(parentIds),
+    };
+  }
+
+  const visibleParent =
+    realVisualParents.find((parent) => !parent.hidden) ||
+    visualParents.find((parent) => !parent.hidden) ||
+    node;
+  const placeholderParent = visualParents.find((parent) =>
+    isPlaceholderParentId(parent.id),
+  );
+  const parentPoint = placeholderParent
+    ? {
+        x: midpoint(visibleParent.cx, placeholderParent.cx),
+        y: midpoint(visibleParent.cy, placeholderParent.cy),
+      }
+    : {
+        x:
+          typeof visibleParent.sx === 'number'
+            ? visibleParent.sx
+            : visibleParent.cx,
+        y:
+          typeof visibleParent.sy === 'number'
+            ? visibleParent.sy
+            : visibleParent.cy,
+      };
+
+  return {
+    parents: placeholderParent
+      ? [visibleParent, placeholderParent]
+      : [visibleParent],
+    parentPoint,
+    parentIds,
+    type: 'single-parent' as const,
+    unionId: undefined,
+    unionKey: unionKeyForParents(parentIdsWithPlaceholders),
+  };
+}
+
+function findVisualParentNode(
+  parentId: string,
+  localCandidates: FamilyTreeNode[],
+  allNodes: FamilyTreeNode[],
+  currentNode: FamilyTreeNode,
+) {
+  return (
+    localCandidates.find((candidate) => candidate.id === parentId) ||
+    allNodes.find(
+      (candidate) =>
+        candidate.id === parentId &&
+        candidate.spouse?.tid === currentNode.tid,
+    ) ||
+    allNodes.find(
+      (candidate) =>
+        candidate.id === parentId &&
+        !candidate.isAncestry &&
+        Math.abs(candidate.cy - currentNode.cy) < 1,
+    ) ||
+    allNodes.find((candidate) => candidate.id === parentId && !candidate.isAncestry) ||
+    allNodes.find((candidate) => candidate.id === parentId)
+  );
+}
+
+function uniqueNodesById(nodes: FamilyTreeNode[]) {
+  const byId = new Map<string, FamilyTreeNode>();
+  for (const node of nodes) {
+    if (!byId.has(node.id)) byId.set(node.id, node);
+  }
+  return Array.from(byId.values());
+}
+
+function orderParentNodesForLink(
+  parentIds: string[],
+  nodes: FamilyTreeNode[],
+) {
+  const ordered = parentIds
+    .map((parentId) => nodes.find((node) => node.id === parentId))
+    .filter((node): node is FamilyTreeNode => Boolean(node));
+
+  if (ordered.length >= 2) return ordered.slice(0, 2);
+  return nodes.slice(0, 2);
 }
 
 function verticalLink(
@@ -733,6 +849,10 @@ function midpoint(a: number, b: number) {
 
 function realUnionIdFor(a: FamilyTreeNode, b: FamilyTreeNode) {
   return a.datum.spouseUnionIds?.[b.id] || b.datum.spouseUnionIds?.[a.id];
+}
+
+function isPlaceholderParentId(id: string) {
+  return id.startsWith('placeholder-spouse-');
 }
 
 function unionKeyForChild(child: FamilyTreeDatum, preferredParentId?: string) {

@@ -10,7 +10,7 @@ type Props = {
   token: string | null;
   onClose: () => void;
   onJobCreated: (job: any, mode: 'import' | 'merge') => void;
-  onApplied: () => void;
+  onApplied: (result?: any) => void | Promise<void>;
 };
 
 export default function GedcomImportDrawer({
@@ -23,8 +23,10 @@ export default function GedcomImportDrawer({
 }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [job, setJob] = useState<any | null>(null);
+  const [result, setResult] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusText, setStatusText] = useState<string | null>(null);
 
   if (!open) return null;
 
@@ -33,30 +35,28 @@ export default function GedcomImportDrawer({
     if (!token || !file) return;
     setBusy(true);
     setError(null);
+    setResult(null);
+    setStatusText(mode === 'merge' ? 'Analyse du GEDCOM...' : 'Import du GEDCOM...');
     try {
       const envelope = await gedcomApi.createJob(file, mode, token);
       const createdJob = envelope.data || envelope;
       setJob(createdJob);
       onJobCreated(createdJob, mode);
+
+      if (mode === 'import') {
+        setStatusText('Creation des personnes, liens et unions...');
+        const applyEnvelope = await gedcomApi.applyJob(createdJob.id, [], token);
+        const applied = applyEnvelope.data || applyEnvelope;
+        setResult(applied);
+        setStatusText('Import termine.');
+        await onApplied(applied);
+        onClose();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur import');
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function applyImport() {
-    if (!token || !job) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await gedcomApi.applyJob(job.id, [], token);
-      onApplied();
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur application');
-    } finally {
-      setBusy(false);
+      setStatusText(null);
     }
   }
 
@@ -68,7 +68,11 @@ export default function GedcomImportDrawer({
             <div className={styles.drawerTitle}>
               {mode === 'merge' ? 'Fusion GEDCOM' : 'Import GEDCOM'}
             </div>
-            <div className={styles.muted}>Fichiers .ged et .gedcom acceptes</div>
+            <div className={styles.muted}>
+              {mode === 'merge'
+                ? 'Compare le fichier avec les personnes existantes.'
+                : 'Ajoute le fichier dans l arbre puis ouvre la nouvelle racine.'}
+            </div>
           </div>
           <button className={styles.iconButton} onClick={onClose} type="button">
             X
@@ -89,9 +93,17 @@ export default function GedcomImportDrawer({
             className={`${styles.button} ${styles.primaryButton}`}
             disabled={!file || !token || busy}
           >
-            Creer le job
+            {busy
+              ? 'Traitement...'
+              : mode === 'merge'
+                ? 'Analyser pour fusion'
+                : 'Importer maintenant'}
           </button>
         </form>
+
+        {statusText ? (
+          <div className={styles.importStatus}>{statusText}</div>
+        ) : null}
 
         {job ? (
           <section className={styles.panel}>
@@ -103,14 +115,13 @@ export default function GedcomImportDrawer({
               <span className={styles.tag}>{job.duplicateCount} doublons</span>
             </div>
             {mode === 'import' ? (
-              <button
-                className={`${styles.button} ${styles.primaryButton}`}
-                disabled={busy || !token}
-                onClick={applyImport}
-                type="button"
-              >
-                Appliquer l'import
-              </button>
+              result ? (
+                <div className={styles.importSummary}>
+                  {result.personsCreated || 0} personnes creees,{' '}
+                  {result.relationshipsCreated || 0} liens,{' '}
+                  {result.unionsCreated || 0} unions.
+                </div>
+              ) : null
             ) : (
               <div className={styles.muted}>
                 Les candidats sont disponibles dans le tiroir de fusion.

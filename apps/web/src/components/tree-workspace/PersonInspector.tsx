@@ -189,11 +189,28 @@ export default function PersonInspector({
 
   return (
     <aside className={styles.inspector}>
-      <section className={styles.panel}>
-        <div className={styles.panelTitle}>{personLabel(selected)}</div>
-        <div className={styles.muted}>
+      <section className={`${styles.panel} ${styles.summaryPanel}`}>
+        <div className={styles.panelEyebrow}>Personne selectionnee</div>
+        <div className={styles.personSummaryName}>{personLabel(selected)}</div>
+        <div className={styles.personSummaryLife}>
           {formatLife(selected) || 'Dates inconnues'}
-          {selected.birthPlace ? ` - ${selected.birthPlace}` : ''}
+        </div>
+        <div className={styles.essentialGrid}>
+          <InfoLine label="Naissance" value={formatEvent(selected.birthDate, selected.birthPlace)} />
+          <InfoLine label="Deces" value={formatEvent(selected.deathDate, selected.deathPlace)} />
+          <InfoLine label="Nom d'usage" value={selected.usageSurname || null} />
+          <InfoLine label="Nom de naissance" value={selected.birthSurname || null} />
+        </div>
+        <div className={styles.summaryCounts}>
+          <span className={styles.tag}>
+            {selectedNode.parents.length || 0} parents
+          </span>
+          <span className={styles.tag}>
+            {selectedNode.children.length || 0} enfants
+          </span>
+          <span className={styles.tag}>
+            {selectedNode.unions.length || 0} unions
+          </span>
         </div>
         <div className={styles.actionRow}>
           <button
@@ -206,30 +223,16 @@ export default function PersonInspector({
           <a className={styles.button} href={`/person/${selected.id}`}>
             Fiche complete
           </a>
-          <button
-            type="button"
-            className={styles.dangerButton}
-            disabled={!token}
-            onClick={() => onRequestDeleteBranch(selected)}
-          >
-            Supprimer branche
-          </button>
         </div>
-        <div className={styles.actionRow}>
-          <span className={styles.tag}>
-            {selectedNode.parents.length || 0} parents
-          </span>
-          <span className={styles.tag}>
-            {selectedNode.children.length || 0} enfants
-          </span>
-          <span className={styles.tag}>
-            {selectedNode.unions.length || 0} unions
-          </span>
-        </div>
-        {integrityWarnings.length > 0 ? (
-          <WarningList warnings={integrityWarnings} />
-        ) : null}
       </section>
+
+      <DataQualityPanel
+        warnings={integrityWarnings}
+        groups={unionGroups}
+        selectedPersonId={selected.id}
+        token={token}
+        onSaved={onSaved}
+      />
 
       <UnionChildrenPanel groups={unionGroups} token={token} />
 
@@ -382,7 +385,90 @@ export default function PersonInspector({
           </form>
         ) : null}
       </section>
+
+      <section className={`${styles.panel} ${styles.dangerPanel}`}>
+        <div className={styles.panelTitle}>Zone danger</div>
+        <p className={styles.muted}>
+          Choisissez au moment de confirmer : personne seule, descendants
+          seulement, ou personne avec sa descendance.
+        </p>
+        <button
+          type="button"
+          className={styles.dangerButton}
+          disabled={!token}
+          onClick={() => onRequestDeleteBranch(selected)}
+        >
+          Ouvrir les options de suppression
+        </button>
+      </section>
     </aside>
+  );
+}
+
+function DataQualityPanel({
+  warnings,
+  groups,
+  selectedPersonId,
+  token,
+  onSaved,
+}: {
+  warnings: string[];
+  groups: UnionGroup[];
+  selectedPersonId: string;
+  token: string | null;
+  onSaved: (personId?: string) => void;
+}) {
+  const [creatingUnionKey, setCreatingUnionKey] = useState<string | null>(null);
+  const actionableGroups = groups.filter(
+    (group) => group.inferred && group.partnerId,
+  );
+
+  async function createMissingUnion(group: UnionGroup) {
+    if (!token || !group.partnerId) return;
+    setCreatingUnionKey(group.key);
+    try {
+      await unionApi.create(
+        {
+          partner1Id: selectedPersonId,
+          partner2Id: group.partnerId,
+          type: 'PARTNERSHIP',
+        },
+        token,
+      );
+      onSaved(selectedPersonId);
+    } finally {
+      setCreatingUnionKey(null);
+    }
+  }
+
+  return (
+    <section className={`${styles.panel} ${styles.qualityPanel}`}>
+      <div className={styles.panelTitle}>Qualite des donnees</div>
+      {warnings.length > 0 ? (
+        <WarningList warnings={warnings} />
+      ) : (
+        <div className={styles.qualityOk}>
+          Aucune anomalie visible dans cette fenetre.
+        </div>
+      )}
+      {actionableGroups.length > 0 ? (
+        <div className={styles.actionRow}>
+          {actionableGroups.map((group) => (
+            <button
+              key={group.key}
+              type="button"
+              className={styles.button}
+              disabled={!token || creatingUnionKey === group.key}
+              onClick={() => createMissingUnion(group)}
+            >
+              {creatingUnionKey === group.key
+                ? 'Creation...'
+                : `Creer l'union avec ${group.title}`}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -642,6 +728,15 @@ function WarningList({ warnings }: { warnings: string[] }) {
   );
 }
 
+function InfoLine({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <div className={styles.infoLine}>
+      <span>{label}</span>
+      <strong>{value || 'Non renseigne'}</strong>
+    </div>
+  );
+}
+
 function buildUnionGroups(tree: TreeWindow, selectedNode: TreeNode): UnionGroup[] {
   const selectedId = selectedNode.person.id;
   const peopleById = new Map(tree.nodes.map((node) => [node.person.id, node.person]));
@@ -766,6 +861,12 @@ function formatDateValue(value?: string | null) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value.slice(0, 10);
   return parsed.toLocaleDateString('fr-FR');
+}
+
+function formatEvent(date?: string | null, place?: string | null) {
+  const formattedDate = formatDateValue(date);
+  if (formattedDate && place) return `${formattedDate} - ${place}`;
+  return formattedDate || place || null;
 }
 
 function isImageMimeType(mimeType?: string) {

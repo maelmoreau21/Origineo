@@ -2,14 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  gedcomApi,
   personApi,
   searchApi,
   treeApi,
 } from '@/lib/api';
 import BranchDeleteDialog from './BranchDeleteDialog';
-import GedcomImportDrawer from './GedcomImportDrawer';
-import MergeReviewDrawer from './MergeReviewDrawer';
 import PersonInspector from './PersonInspector';
 import TreeCanvas from './TreeCanvas';
 import TreeToolbar from './TreeToolbar';
@@ -23,6 +20,7 @@ export default function TreeWorkspace() {
   const [tree, setTree] = useState<TreeWindow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [ancestors, setAncestors] = useState(4);
   const [descendants, setDescendants] = useState(2);
   const [includeSiblings, setIncludeSiblings] = useState(true);
@@ -30,36 +28,41 @@ export default function TreeWorkspace() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
-  const [importMode, setImportMode] = useState<'import' | 'merge'>('import');
-  const [importOpen, setImportOpen] = useState(false);
-  const [mergeOpen, setMergeOpen] = useState(false);
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Person | null>(null);
 
   useEffect(() => {
     document.body.classList.add('tree-workspace-mode');
-    setToken(window.localStorage.getItem('origineo_token'));
-    return () => document.body.classList.remove('tree-workspace-mode');
-  }, []);
+    const storedToken = window.localStorage.getItem('origineo_token');
+    setToken(storedToken);
 
-  useEffect(() => {
     let alive = true;
-    personApi
-      .getRoot()
-      .then((envelope) => {
+    async function boot() {
+      setLoading(true);
+      setError(null);
+      try {
+        const nextRootId = await resolveRootPersonId(storedToken);
         if (!alive) return;
-        const root = envelope.data || envelope;
-        if (root?.id) {
-          setRootPersonId(root.id);
-          setSelectedPersonId(root.id);
+        if (nextRootId) {
+          setRootPersonId(nextRootId);
+          setSelectedPersonId(nextRootId);
+        } else {
+          setTree(null);
+          setRootPersonId(null);
+          setSelectedPersonId(null);
         }
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Racine introuvable'))
-      .finally(() => {
+      } catch (err) {
+        if (alive) {
+          setError(err instanceof Error ? err.message : 'Impossible de charger l arbre');
+        }
+      } finally {
         if (alive) setLoading(false);
-      });
+      }
+    }
+
+    void boot();
     return () => {
       alive = false;
+      document.body.classList.remove('tree-workspace-mode');
     };
   }, []);
 
@@ -118,23 +121,27 @@ export default function TreeWorkspace() {
     await loadTree(personId, personId);
   }
 
-  async function exportBranch() {
-    if (!token) return;
-    const targetId = rootPersonId || selectedPersonId || undefined;
-    const { blob, filename } = await gedcomApi.exportFile(token, targetId, 8);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  }
+  async function reloadAfterDelete() {
+    const deletedId = deleteTarget?.id;
+    const currentRootDeleted = Boolean(deletedId && deletedId === rootPersonId);
+    const currentSelectionDeleted = Boolean(deletedId && deletedId === selectedPersonId);
 
-  function openImport(mode: 'import' | 'merge') {
-    setImportMode(mode);
-    setImportOpen(true);
+    if (currentRootDeleted) {
+      const nextRootId = await resolveRootPersonId(token);
+      if (nextRootId) {
+        await loadTree(nextRootId, nextRootId);
+      } else {
+        setRootPersonId(null);
+        setSelectedPersonId(null);
+        setTree(null);
+      }
+      return;
+    }
+
+    await loadTree(
+      rootPersonId,
+      currentSelectionDeleted ? rootPersonId || undefined : selectedPersonId || undefined,
+    );
   }
 
   return (
@@ -149,7 +156,6 @@ export default function TreeWorkspace() {
           descendants={descendants}
           includeSiblings={includeSiblings}
           includeSpouses={includeSpouses}
-          hasToken={Boolean(token)}
           onSearchQueryChange={setSearchQuery}
           onSearch={runSearch}
           onPickSearchResult={pickSearchResult}
@@ -157,9 +163,10 @@ export default function TreeWorkspace() {
           onDescendantsChange={(value) => setDescendants(clamp(value, 0, 12))}
           onIncludeSiblingsChange={setIncludeSiblings}
           onIncludeSpousesChange={setIncludeSpouses}
-          onRefresh={() => loadTree(rootPersonId)}
-          onImport={openImport}
-          onExport={exportBranch}
+          onRefresh={() => {
+            setNotice(null);
+            loadTree(rootPersonId);
+          }}
         />
 
         <TreeCanvas
@@ -187,39 +194,45 @@ export default function TreeWorkspace() {
       {error ? (
         <div className={styles.candidate}>{error}</div>
       ) : null}
-
-      <GedcomImportDrawer
-        open={importOpen}
-        mode={importMode}
-        token={token}
-        onClose={() => setImportOpen(false)}
-        onJobCreated={(job, mode) => {
-          setActiveJobId(job.id);
-          if (mode === 'merge') {
-            setImportOpen(false);
-            setMergeOpen(true);
-          }
-        }}
-        onApplied={() => loadTree(rootPersonId)}
-      />
-
-      <MergeReviewDrawer
-        open={mergeOpen}
-        jobId={activeJobId}
-        token={token}
-        onClose={() => setMergeOpen(false)}
-        onApplied={() => loadTree(rootPersonId)}
-      />
+      {notice ? (
+        <div className={styles.workspaceNotice}>
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice(null)}>
+            Fermer
+          </button>
+        </div>
+      ) : null}
 
       <BranchDeleteDialog
         open={Boolean(deleteTarget)}
         person={deleteTarget}
         token={token}
         onClose={() => setDeleteTarget(null)}
-        onDeleted={() => loadTree(rootPersonId || selectedPerson?.id || null)}
+        onDeleted={reloadAfterDelete}
       />
     </div>
   );
+}
+
+async function resolveRootPersonId(token: string | null) {
+  const rootEnvelope = await personApi.getRoot().catch(() => null);
+  const root = rootEnvelope?.data || rootEnvelope;
+  if (root?.id) return root.id;
+
+  if (token) {
+    const repairEnvelope = await personApi.repairRootDefault(token).catch(() => null);
+    const repair = repairEnvelope?.data || repairEnvelope;
+    if (repair?.personId) return repair.personId;
+
+    const repairedRootEnvelope = await personApi.getRoot().catch(() => null);
+    const repairedRoot = repairedRootEnvelope?.data || repairedRootEnvelope;
+    if (repairedRoot?.id) return repairedRoot.id;
+  }
+
+  const listEnvelope = await personApi.getAll(1, 1).catch(() => null);
+  const payload = listEnvelope?.data || listEnvelope;
+  const firstPerson = payload?.data?.[0] || payload?.persons?.[0] || payload?.[0];
+  return firstPerson?.id || null;
 }
 
 function clamp(value: number, min: number, max: number) {

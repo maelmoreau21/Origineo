@@ -13,6 +13,8 @@ type Props = {
   onDeleted: () => void;
 };
 
+type DeleteMode = 'person-only' | 'person-descendants' | 'descendants-only';
+
 export default function BranchDeleteDialog({
   person,
   token,
@@ -20,14 +22,28 @@ export default function BranchDeleteDialog({
   onClose,
   onDeleted,
 }: Props) {
-  const [includeRoot, setIncludeRoot] = useState(true);
+  const [deleteMode, setDeleteMode] = useState<DeleteMode>('person-only');
   const [preview, setPreview] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || !person || !token) return;
+    if (deleteMode === 'person-only') {
+      setBusy(false);
+      setError(null);
+      setPreview({
+        personsDeleted: 1,
+        relationshipsDeleted: null,
+        unionsDeleted: null,
+        documentsDeleted: null,
+        personOnly: true,
+      });
+      return;
+    }
+
     let alive = true;
+    const includeRoot = deleteMode === 'person-descendants';
     setBusy(true);
     setError(null);
     personApi
@@ -40,7 +56,7 @@ export default function BranchDeleteDialog({
     return () => {
       alive = false;
     };
-  }, [open, person, token, includeRoot]);
+  }, [open, person, token, deleteMode]);
 
   if (!open || !person) return null;
 
@@ -49,7 +65,16 @@ export default function BranchDeleteDialog({
     setBusy(true);
     setError(null);
     try {
-      await personApi.deleteBranch(person.id, token, includeRoot, false);
+      if (deleteMode === 'person-only') {
+        await personApi.delete(person.id, token);
+      } else {
+        await personApi.deleteBranch(
+          person.id,
+          token,
+          deleteMode === 'person-descendants',
+          false,
+        );
+      }
       onDeleted();
       onClose();
     } catch (err) {
@@ -63,7 +88,7 @@ export default function BranchDeleteDialog({
     <div className={styles.dialogOverlay}>
       <div className={styles.dialog} role="dialog" aria-modal="true">
         <div className={styles.drawerHeader}>
-          <div className={styles.drawerTitle}>Supprimer une branche</div>
+          <div className={styles.drawerTitle}>Suppression</div>
           <button className={styles.iconButton} onClick={onClose} type="button">
             X
           </button>
@@ -71,25 +96,39 @@ export default function BranchDeleteDialog({
         <p className={styles.muted}>{personLabel(person)}</p>
 
         <label className={styles.label}>
-          <span>Perimetre</span>
+          <span>Que voulez-vous supprimer ?</span>
           <select
             className={styles.select}
-            value={includeRoot ? 'with-root' : 'descendants-only'}
-            onChange={(event) => setIncludeRoot(event.target.value === 'with-root')}
+            value={deleteMode}
+            onChange={(event) => setDeleteMode(event.target.value as DeleteMode)}
           >
-            <option value="with-root">Personne selectionnee + descendants</option>
+            <option value="person-only">Personne seule</option>
+            <option value="person-descendants">Personne + descendants</option>
             <option value="descendants-only">Descendants seulement</option>
           </select>
         </label>
+        <p className={styles.muted}>
+          {deleteMode === 'person-only'
+            ? 'Supprime seulement cette fiche. Ses parents, conjoints et enfants restent dans la base, mais les liens directs avec cette personne seront coupes.'
+            : deleteMode === 'person-descendants'
+              ? 'Supprime cette personne et toute sa descendance visible par les liens enfant.'
+              : 'Conserve cette personne et supprime uniquement sa descendance.'}
+        </p>
 
         <div className={styles.panel}>
           {busy && !preview ? <div className={styles.spinner} /> : null}
           {preview ? (
             <div className={styles.fieldGrid}>
               <span className={styles.tag}>{preview.personsDeleted} personnes</span>
-              <span className={styles.tag}>{preview.relationshipsDeleted} relations</span>
-              <span className={styles.tag}>{preview.unionsDeleted} unions</span>
-              <span className={styles.tag}>{preview.documentsDeleted} documents</span>
+              <span className={styles.tag}>
+                {preview.relationshipsDeleted ?? 'Liens directs'} relations
+              </span>
+              <span className={styles.tag}>
+                {preview.unionsDeleted ?? 'Unions directes'} unions
+              </span>
+              <span className={styles.tag}>
+                {preview.documentsDeleted ?? 'Conserves'} documents
+              </span>
             </div>
           ) : null}
           {error ? <div className={styles.candidate}>{error}</div> : null}
@@ -105,7 +144,7 @@ export default function BranchDeleteDialog({
             disabled={busy || !token}
             type="button"
           >
-            Confirmer
+            Supprimer
           </button>
         </div>
       </div>

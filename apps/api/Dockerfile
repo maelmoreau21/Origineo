@@ -19,8 +19,7 @@ RUN pnpm install --frozen-lockfile || pnpm install
 
 # ─── Development ─────────────────────
 FROM deps AS development
-COPY apps/api apps/api
-COPY packages/shared packages/shared
+COPY . .
 WORKDIR /app/apps/api
 # Ensure local dependencies are installed
 RUN pnpm install
@@ -31,8 +30,7 @@ CMD ["pnpm", "run", "start:dev"]
 
 # ─── Builder ─────────────────────────
 FROM deps AS builder
-COPY apps/api apps/api
-COPY packages/shared packages/shared
+COPY . .
 WORKDIR /app/apps/api
 # Ensure local dependencies are installed and generate client
 RUN pnpm install

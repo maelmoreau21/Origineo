@@ -26,6 +26,7 @@ export default function TreeSettingsPage() {
 
   // Try to restore session from localStorage
   useEffect(() => {
+    const requestedTab = getInitialTabFromUrl();
     let isMounted = true;
     const saved = localStorage.getItem('origineo_token');
     if (!saved) {
@@ -43,7 +44,7 @@ export default function TreeSettingsPage() {
       }
 
       setUser(profile);
-      setActiveTab('people');
+      setActiveTab(requestedTab || 'people');
     }).catch(() => {
       if (!isMounted) return;
       localStorage.removeItem('origineo_token');
@@ -74,7 +75,7 @@ export default function TreeSettingsPage() {
         return;
       }
 
-      setActiveTab('people');
+      setActiveTab(getInitialTabFromUrl() || 'people');
     } catch (err: any) {
       alert(err.message || 'Échec de la connexion');
     }
@@ -162,6 +163,14 @@ export default function TreeSettingsPage() {
       </div>
     </div>
   );
+}
+
+function getInitialTabFromUrl(): Tab | null {
+  if (typeof window === 'undefined') return null;
+  const tab = new URLSearchParams(window.location.search).get('tab');
+  return tab === 'people' || tab === 'gedcom' || tab === 'maintenance'
+    ? tab
+    : null;
 }
 
 // ─── Login Form ─────────────────────────────

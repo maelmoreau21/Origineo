@@ -114,12 +114,138 @@ describe('family-layout links', () => {
     });
 
     const layout = layoutFamilyTree(tree, 'p1');
+    const c1 = getNode(layout, 'c1');
+    const c2 = getNode(layout, 'c2');
+    const c3 = getNode(layout, 'c3');
     const c1Bus = layout.links.find((link) => link.toId === 'c1')?.points.at(-1)?.[0];
     const c2Bus = layout.links.find((link) => link.toId === 'c2')?.points.at(-1)?.[0];
     const c3Bus = layout.links.find((link) => link.toId === 'c3')?.points.at(-1)?.[0];
 
     expect(c2Bus).toBeCloseTo(c3Bus || 0, 1);
     expect(c1Bus).not.toBeCloseTo(c2Bus || 0, 1);
+    expect(Math.abs(c1.cx - c2.cx)).toBeGreaterThan(220);
+    assertNoNodeOverlaps(layout);
+  });
+
+  it('places children from the same father but different mothers under separate unions', () => {
+    const tree = makeTree({
+      persons: [
+        person('father', 'Paul', 'Moreau', 'MALE', 0),
+        person('mother-a', 'Anna', 'Durand', 'FEMALE', 0),
+        person('mother-b', 'Sofia', 'Leroy', 'FEMALE', 0),
+        person('child-a', 'Nina', 'Moreau', 'FEMALE', 1),
+        person('child-b1', 'Tom', 'Moreau', 'MALE', 1),
+        person('child-b2', 'Lise', 'Moreau', 'FEMALE', 1),
+      ],
+      relationships: [
+        rel('father', 'child-a'),
+        rel('mother-a', 'child-a'),
+        rel('father', 'child-b1'),
+        rel('mother-b', 'child-b1'),
+        rel('father', 'child-b2'),
+        rel('mother-b', 'child-b2'),
+      ],
+      unions: [
+        union('union-a', 'father', 'mother-a'),
+        union('union-b', 'father', 'mother-b'),
+      ],
+    });
+
+    const layout = layoutFamilyTree(tree, 'father');
+    const childA = getNode(layout, 'child-a');
+    const childB1 = getNode(layout, 'child-b1');
+    const childB2 = getNode(layout, 'child-b2');
+    const linkA = layout.links.find((link) => link.toId === 'child-a');
+    const linkB1 = layout.links.find((link) => link.toId === 'child-b1');
+    const linkB2 = layout.links.find((link) => link.toId === 'child-b2');
+
+    expect(linkA?.unionId).toBe('union-a');
+    expect(linkB1?.unionId).toBe('union-b');
+    expect(linkB2?.unionId).toBe('union-b');
+    expect(linkB1?.points.at(-1)?.[0]).toBeCloseTo(
+      linkB2?.points.at(-1)?.[0] || 0,
+      1,
+    );
+    expect(linkA?.points.at(-1)?.[0]).not.toBeCloseTo(
+      linkB1?.points.at(-1)?.[0] || 0,
+      1,
+    );
+    expect(Math.abs(childA.cx - childB1.cx)).toBeGreaterThan(220);
+    assertNoNodeOverlaps(layout);
+  });
+
+  it('keeps full siblings attached to the same couple bus', () => {
+    const tree = makeTree({
+      persons: [
+        person('p1', 'Jean', 'Dupont', 'MALE', 0),
+        person('p2', 'Marie', 'Martin', 'FEMALE', 0),
+        person('c1', 'Alice', 'Dupont', 'FEMALE', 1),
+        person('c2', 'Leo', 'Dupont', 'MALE', 1),
+        person('c3', 'Noe', 'Dupont', 'MALE', 1),
+        person('s1', 'Emma', 'Petit', 'FEMALE', 1),
+        person('g1', 'Mila', 'Dupont', 'FEMALE', 2),
+      ],
+      relationships: [
+        rel('p1', 'c1'),
+        rel('p2', 'c1'),
+        rel('p1', 'c2'),
+        rel('p2', 'c2'),
+        rel('p1', 'c3'),
+        rel('p2', 'c3'),
+        rel('c2', 'g1'),
+        rel('s1', 'g1'),
+      ],
+      unions: [union('u1', 'p1', 'p2'), union('u2', 'c2', 's1')],
+    });
+
+    const layout = layoutFamilyTree(tree, 'p1');
+    const parent1 = getNode(layout, 'p1');
+    const parent2 = getNode(layout, 'p2');
+    const siblingLinks = ['c1', 'c2', 'c3'].map((childId) =>
+      layout.links.find((link) => link.toId === childId),
+    );
+    const busX = (parent1.cx + parent2.cx) / 2;
+
+    for (const link of siblingLinks) {
+      expect(link?.type).toBe('parent-child');
+      expect(link?.unionId).toBe('u1');
+      expect(link?.unionKey).toBe('p1+p2');
+      expect(link?.parentIds?.sort()).toEqual(['p1', 'p2']);
+      expect(link?.points.at(-1)?.[0]).toBeCloseTo(busX, 1);
+    }
+  });
+
+  it('does not degrade full siblings to mother-only links when the mother is the root', () => {
+    const tree = makeTree({
+      persons: [
+        person('p2', 'Marie', 'Martin', 'FEMALE', 0),
+        person('p1', 'Jean', 'Dupont', 'MALE', 0),
+        person('c1', 'Alice', 'Dupont', 'FEMALE', 1),
+        person('c2', 'Leo', 'Dupont', 'MALE', 1),
+      ],
+      relationships: [
+        rel('p1', 'c1'),
+        rel('p2', 'c1'),
+        rel('p1', 'c2'),
+        rel('p2', 'c2'),
+      ],
+      unions: [union('u1', 'p1', 'p2')],
+    });
+
+    const layout = layoutFamilyTree(tree, 'p2');
+    const father = getNode(layout, 'p1');
+    const mother = getNode(layout, 'p2');
+    const childLinks = ['c1', 'c2'].map((childId) =>
+      layout.links.find((link) => link.toId === childId),
+    );
+    const busX = (father.cx + mother.cx) / 2;
+
+    for (const link of childLinks) {
+      expect(link?.type).toBe('parent-child');
+      expect(link?.unionId).toBe('u1');
+      expect(link?.points.at(-1)?.[0]).toBeCloseTo(busX, 1);
+      expect(link?.points.at(-1)?.[0]).not.toBeCloseTo(mother.cx, 1);
+    }
   });
 
   it('infers a visual co-parent bus when parents share a child without a union record', () => {
@@ -294,4 +420,20 @@ function getNode(layout: ReturnType<typeof layoutFamilyTree>, id: string) {
   const node = layout.nodes.find((item) => item.id === id);
   expect(node).toBeDefined();
   return node!;
+}
+
+function assertNoNodeOverlaps(layout: ReturnType<typeof layoutFamilyTree>) {
+  for (let aIndex = 0; aIndex < layout.nodes.length; aIndex += 1) {
+    for (let bIndex = aIndex + 1; bIndex < layout.nodes.length; bIndex += 1) {
+      const a = layout.nodes[aIndex];
+      const b = layout.nodes[bIndex];
+      const overlapsX = Math.abs(a.cx - b.cx) < (a.width + b.width) / 2;
+      const overlapsY = Math.abs(a.cy - b.cy) < (a.height + b.height) / 2;
+
+      expect(
+        overlapsX && overlapsY,
+        `${a.tid} overlaps ${b.tid}`,
+      ).toBe(false);
+    }
+  }
 }

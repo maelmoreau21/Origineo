@@ -19,8 +19,7 @@ RUN pnpm install --frozen-lockfile || pnpm install
 
 # ─── Development ─────────────────────
 FROM deps AS development
-COPY apps/web apps/web
-COPY packages/shared packages/shared
+COPY . .
 WORKDIR /app/apps/web
 # Ensure local dependencies are installed
 RUN pnpm install
@@ -29,8 +28,7 @@ CMD ["pnpm", "exec", "next", "dev", "-H", "0.0.0.0", "-p", "3000"]
 
 # ─── Builder ─────────────────────────
 FROM deps AS builder
-COPY apps/web apps/web
-COPY packages/shared packages/shared
+COPY . .
 WORKDIR /app/apps/web
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm run build

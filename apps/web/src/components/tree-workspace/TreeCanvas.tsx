@@ -1,8 +1,13 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { layoutFamilyTree } from '@/lib/family-layout';
+import {
+  centerViewOnPoint,
+  fitViewToBounds,
+  zoomViewAroundViewportCenter,
+} from './canvas-view';
 import styles from './TreeWorkspace.module.css';
 import { formatLife, personLabel, TreeWindow } from './types';
 
@@ -20,15 +25,81 @@ export default function TreeCanvas({
   onSelectPerson,
 }: Props) {
   const router = useRouter();
-  const [view, setView] = useState({ x: -120, y: -80, scale: 0.88 });
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState({ x: 0, y: 0, scale: 0.9 });
   const dragRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(
     null,
   );
+  const lastAutoCenteredRef = useRef<string | null>(null);
 
   const layout = useMemo(() => {
     if (!tree || !rootPersonId) return null;
     return layoutFamilyTree(tree as any, rootPersonId);
   }, [tree, rootPersonId]);
+
+  const contentWidth = layout?.width || 0;
+  const contentHeight = layout?.height || 0;
+  const offsetX = layout ? -layout.minX : 0;
+  const offsetY = layout ? -layout.minY : 0;
+
+  const viewportSize = useCallback(() => {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    return {
+      width: rect?.width || 1000,
+      height: rect?.height || 720,
+    };
+  }, []);
+
+  const centerOnPerson = useCallback(
+    (personId?: string | null, scale = view.scale) => {
+      if (!layout || !personId) return;
+      const target = layout.nodes.find((node) => node.id === personId);
+      if (!target) return;
+      setView(
+        centerViewOnPoint(
+          {
+            x: target.cx + offsetX,
+            y: target.cy + offsetY,
+          },
+          viewportSize(),
+          scale,
+        ),
+      );
+    },
+    [layout, offsetX, offsetY, view.scale, viewportSize],
+  );
+
+  const fitTree = useCallback(() => {
+    if (!layout) return;
+    setView(
+      fitViewToBounds(
+        { width: contentWidth, height: contentHeight },
+        viewportSize(),
+        { padding: 96 },
+      ),
+    );
+  }, [contentHeight, contentWidth, layout, viewportSize]);
+
+  useEffect(() => {
+    if (!layout || !selectedPersonId) return;
+    const token = `${rootPersonId}:${layout.nodes.length}:${layout.width}:${layout.height}`;
+    if (lastAutoCenteredRef.current === token) return;
+    lastAutoCenteredRef.current = token;
+    centerOnPerson(selectedPersonId, 0.92);
+  }, [centerOnPerson, layout, rootPersonId, selectedPersonId]);
+
+  useEffect(() => {
+    if (!layout) return;
+    const handleResize = () => centerOnPerson(selectedPersonId, view.scale);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [centerOnPerson, layout, selectedPersonId, view.scale]);
+
+  function zoomBy(delta: number) {
+    setView(
+      zoomViewAroundViewportCenter(view, viewportSize(), view.scale + delta),
+    );
+  }
 
   if (!tree || !layout) {
     return (
@@ -36,33 +107,37 @@ export default function TreeCanvas({
         <div className={styles.emptyState}>
           <div>
             <strong>Aucun arbre charge</strong>
-            <p>Importez un GEDCOM ou creez une premiere personne.</p>
+            <p>
+              Importez un GEDCOM pour creer l arbre, ou choisissez une personne
+              avec la recherche.
+            </p>
+            <div className={styles.emptyActions}>
+              <a className={`${styles.button} ${styles.primaryButton}`} href="/tree-settings?tab=gedcom">
+                Gestion GEDCOM
+              </a>
+            </div>
           </div>
         </div>
       </section>
     );
   }
-
-  const contentWidth = layout.width;
-  const contentHeight = layout.height;
-  const offsetX = -layout.minX;
-  const offsetY = -layout.minY;
-
   return (
     <section className={styles.canvasPane}>
       <div
+        ref={viewportRef}
         className={styles.canvasViewport}
         onWheel={(event) => {
           event.preventDefault();
-          const delta = event.deltaY > 0 ? -0.08 : 0.08;
-          setView((current) => ({
-            ...current,
-            scale: Math.max(0.25, Math.min(1.6, current.scale + delta)),
-          }));
+          zoomBy(event.deltaY > 0 ? -0.08 : 0.08);
         }}
         onPointerDown={(event) => {
           const target = event.target as HTMLElement;
-          if (target.closest('[data-person-card="true"]')) return;
+          if (
+            target.closest('[data-person-card="true"]') ||
+            target.closest('[data-canvas-control="true"]')
+          ) {
+            return;
+          }
 
           (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
           dragRef.current = {
@@ -187,34 +262,42 @@ export default function TreeCanvas({
         <div className={styles.zoomControls}>
           <button
             className={styles.iconButton}
-            onClick={() =>
-              setView((current) => ({
-                ...current,
-                scale: Math.max(0.25, current.scale - 0.12),
-              }))
-            }
+            data-canvas-control="true"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              zoomBy(-0.12);
+            }}
             title="Zoom arriere"
           >
             -
           </button>
+          <span className={styles.zoomValue} data-canvas-control="true">
+            {Math.round(view.scale * 100)}%
+          </span>
           <button
             className={styles.iconButton}
-            onClick={() => setView({ x: -120, y: -80, scale: 0.88 })}
-            title="Recentrer la vue"
-          >
-            0
-          </button>
-          <button
-            className={styles.iconButton}
-            onClick={() =>
-              setView((current) => ({
-                ...current,
-                scale: Math.min(1.6, current.scale + 0.12),
-              }))
-            }
+            data-canvas-control="true"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              zoomBy(0.12);
+            }}
             title="Zoom avant"
           >
             +
+          </button>
+          <button
+            className={styles.button}
+            data-canvas-control="true"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              fitTree();
+            }}
+            title="Afficher tout l'arbre visible"
+          >
+            Ajuster
           </button>
         </div>
       </div>
