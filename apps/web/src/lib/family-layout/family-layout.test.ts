@@ -31,7 +31,7 @@ describe('family-layout links', () => {
     expect(childLink?.points.at(-1)?.[0]).toBeCloseTo((p1.cx + p2.cx) / 2, 1);
     expect(childLink?.unionId).toBe('u1');
     expect(childLink?.parentIds?.sort()).toEqual(['p1', 'p2']);
-    expect(childLink?.path).toContain('C');
+    expect(childLink?.path).not.toContain('C');
   });
 
   it('creates an invisible placeholder for single parents and keeps the child link clean', () => {
@@ -52,7 +52,7 @@ describe('family-layout links', () => {
     expect(layout.nodes.some((node) => node.id.startsWith('placeholder'))).toBe(false);
     expect(childLink?.type).toBe('single-parent');
     expect(childLink?.points.at(-1)?.[0]).not.toBeCloseTo(parent.cx, 1);
-    expect(childLink?.path).toContain('C');
+    expect(childLink?.path).not.toContain('C');
   });
 
   it('keeps remarriage links distinct and attaches each child to the right couple', () => {
@@ -90,6 +90,9 @@ describe('family-layout links', () => {
       c2Link?.points.at(-1)?.[0] || 0,
       1,
     );
+    expect([c1Link, c2Link].some((link) => link?.path.includes('Q'))).toBe(true);
+    expect(c1Link?.path).not.toContain('C');
+    expect(c2Link?.path).not.toContain('C');
   });
 
   it('groups half-siblings by their other parent on separate buses', () => {
@@ -123,6 +126,8 @@ describe('family-layout links', () => {
 
     expect(c2Bus).toBeCloseTo(c3Bus || 0, 1);
     expect(c1Bus).not.toBeCloseTo(c2Bus || 0, 1);
+    expect(busYFor(layout, 'c2')).toBeCloseTo(busYFor(layout, 'c3') || 0, 1);
+    expect(busYFor(layout, 'c1')).not.toBeCloseTo(busYFor(layout, 'c2') || 0, 1);
     expect(Math.abs(c1.cx - c2.cx)).toBeGreaterThan(220);
     assertNoNodeOverlaps(layout);
   });
@@ -162,12 +167,23 @@ describe('family-layout links', () => {
     expect(linkA?.unionId).toBe('union-a');
     expect(linkB1?.unionId).toBe('union-b');
     expect(linkB2?.unionId).toBe('union-b');
+    assertCoupleMidpointLink(layout, 'child-a');
+    assertCoupleMidpointLink(layout, 'child-b1');
+    assertCoupleMidpointLink(layout, 'child-b2');
     expect(linkB1?.points.at(-1)?.[0]).toBeCloseTo(
       linkB2?.points.at(-1)?.[0] || 0,
       1,
     );
     expect(linkA?.points.at(-1)?.[0]).not.toBeCloseTo(
       linkB1?.points.at(-1)?.[0] || 0,
+      1,
+    );
+    expect(busYFor(layout, 'child-b1')).toBeCloseTo(
+      busYFor(layout, 'child-b2') || 0,
+      1,
+    );
+    expect(busYFor(layout, 'child-a')).not.toBeCloseTo(
+      busYFor(layout, 'child-b1') || 0,
       1,
     );
     expect(Math.abs(childA.cx - childB1.cx)).toBeGreaterThan(220);
@@ -246,6 +262,8 @@ describe('family-layout links', () => {
       expect(link?.points.at(-1)?.[0]).toBeCloseTo(busX, 1);
       expect(link?.points.at(-1)?.[0]).not.toBeCloseTo(mother.cx, 1);
     }
+    assertCoupleMidpointLink(layout, 'c1');
+    assertCoupleMidpointLink(layout, 'c2');
   });
 
   it('infers a visual co-parent bus when parents share a child without a union record', () => {
@@ -420,6 +438,29 @@ function getNode(layout: ReturnType<typeof layoutFamilyTree>, id: string) {
   const node = layout.nodes.find((item) => item.id === id);
   expect(node).toBeDefined();
   return node!;
+}
+
+function busYFor(layout: ReturnType<typeof layoutFamilyTree>, childId: string) {
+  const link = layout.links.find((item) => item.toId === childId);
+  expect(link).toBeDefined();
+  return link!.points[1]?.[1];
+}
+
+function assertCoupleMidpointLink(
+  layout: ReturnType<typeof layoutFamilyTree>,
+  childId: string,
+) {
+  const link = layout.links.find((item) => item.toId === childId);
+  expect(link).toBeDefined();
+  expect(link!.type).toBe('parent-child');
+  expect(link!.parentIds).toHaveLength(2);
+
+  const parents = link!.parentIds!.map((parentId) => getNode(layout, parentId));
+  const midpointX = (parents[0].cx + parents[1].cx) / 2;
+  const midpointY = (parents[0].cy + parents[1].cy) / 2;
+
+  expect(link!.points.at(-1)?.[0]).toBeCloseTo(midpointX, 1);
+  expect(link!.points.at(-1)?.[1]).toBeCloseTo(midpointY, 1);
 }
 
 function assertNoNodeOverlaps(layout: ReturnType<typeof layoutFamilyTree>) {

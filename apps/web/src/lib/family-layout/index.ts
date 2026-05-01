@@ -90,6 +90,9 @@ const NODE_HEIGHT = 118;
 const DEFAULT_NODE_SEPARATION = 296;
 const DEFAULT_LEVEL_SEPARATION = 224;
 const DIFFERENT_UNION_SEPARATION = 0.85;
+const LINK_CORNER_RADIUS = 18;
+const LINK_BUS_LANE_GAP = 36;
+const LINK_BUS_EDGE_PADDING = 42;
 
 /**
  * Adaptation du principe de layout de donatso/family-chart.
@@ -631,11 +634,27 @@ function handleProgenyLinks(
 ) {
   if (!node.children || node.children.length === 0) return;
 
-  for (const child of node.children) {
-    const anchor = resolveProgenyAnchor(node, child, allNodes);
-    if (!anchor) continue;
+  const resolvedLinks = node.children
+    .map((child) => ({
+      child,
+      anchor: resolveProgenyAnchor(node, child, allNodes),
+    }))
+    .filter(
+      (item): item is {
+        child: FamilyTreeNode;
+        anchor: NonNullable<ReturnType<typeof resolveProgenyAnchor>>;
+      } => Boolean(item.anchor),
+    );
+  const laneOffsets = unionLaneOffsets(
+    resolvedLinks.map((item) => item.anchor.unionKey),
+  );
 
-    const points = verticalLink({ x: child.cx, y: child.cy }, anchor.parentPoint);
+  for (const { child, anchor } of resolvedLinks) {
+    const points = verticalLink(
+      { x: child.cx, y: child.cy },
+      anchor.parentPoint,
+      laneOffsets.get(anchor.unionKey) || 0,
+    );
     const hidden = child.hidden || anchor.parents.every((parent) => parent.hidden);
     links.push({
       id: linkId(child, ...anchor.parents),
@@ -663,7 +682,11 @@ function resolveProgenyAnchor(
   const parentIds = parentIdsWithPlaceholders.filter(
     (id) => !isPlaceholderParentId(id),
   );
-  const localCandidates = [node, ...(node.spouses || [])];
+  const localCandidates = [
+    node,
+    ...(node.spouses || []),
+    ...(node.coparent ? [node.coparent] : []),
+  ];
   const visualParents = uniqueNodesById(
     parentIdsWithPlaceholders
       .map((parentId) =>
@@ -675,8 +698,19 @@ function resolveProgenyAnchor(
     (parent) => !isPlaceholderParentId(parent.id),
   );
 
-  if (parentIds.length >= 2 && realVisualParents.length >= 2) {
-    const orderedParents = orderParentNodesForLink(parentIds, realVisualParents);
+  const visibleParentPair =
+    parentIds.length >= 2
+      ? resolveVisibleParentPair(
+          parentIds,
+          realVisualParents,
+          localCandidates,
+          allNodes,
+          node,
+        )
+      : [];
+
+  if (parentIds.length >= 2 && visibleParentPair.length >= 2) {
+    const orderedParents = orderParentNodesForLink(parentIds, visibleParentPair);
     const [p1, p2] = orderedParents;
     const parentPoint = {
       x: midpoint(p1.cx, p2.cx),
@@ -728,27 +762,95 @@ function resolveProgenyAnchor(
   };
 }
 
+function unionLaneOffsets(unionKeys: string[]) {
+  const keys = unique(unionKeys);
+  const offsets = new Map<string, number>();
+  if (keys.length <= 1) {
+    if (keys[0]) offsets.set(keys[0], 0);
+    return offsets;
+  }
+
+  keys.forEach((key, index) => {
+    offsets.set(key, (index - (keys.length - 1) / 2) * LINK_BUS_LANE_GAP);
+  });
+  return offsets;
+}
+
 function findVisualParentNode(
   parentId: string,
   localCandidates: FamilyTreeNode[],
   allNodes: FamilyTreeNode[],
   currentNode: FamilyTreeNode,
 ) {
+  const candidates = uniqueNodesByTid(
+    [...localCandidates, ...allNodes].filter(
+      (candidate) => candidate.id === parentId,
+    ),
+  );
+  if (candidates.length === 0) return undefined;
+
+  return candidates.sort(
+    (a, b) =>
+      parentCandidateScore(b, localCandidates, currentNode) -
+      parentCandidateScore(a, localCandidates, currentNode),
+  )[0];
+}
+
+function resolveVisibleParentPair(
+  parentIds: string[],
+  resolvedParents: FamilyTreeNode[],
+  localCandidates: FamilyTreeNode[],
+  allNodes: FamilyTreeNode[],
+  currentNode: FamilyTreeNode,
+) {
+  return parentIds
+    .map(
+      (parentId) =>
+        resolvedParents.find((parent) => parent.id === parentId && !parent.hidden) ||
+        resolvedParents.find((parent) => parent.id === parentId) ||
+        findVisualParentNode(parentId, localCandidates, allNodes, currentNode),
+    )
+    .filter((parent): parent is FamilyTreeNode => {
+      if (!parent) return false;
+      return !isPlaceholderParentId(parent.id);
+    });
+}
+
+function parentCandidateScore(
+  candidate: FamilyTreeNode,
+  localCandidates: FamilyTreeNode[],
+  currentNode: FamilyTreeNode,
+) {
+  let score = 0;
+  if (localCandidates.some((local) => local.tid === candidate.tid)) score += 1000;
+  if (isPairedWithCurrent(candidate, currentNode)) score += 500;
+  if (!candidate.hidden) score += 240;
+  else score -= 240;
+  if (Math.abs(candidate.cy - currentNode.cy) < 1) score += 160;
+  if (!candidate.isAncestry) score += 80;
+  if (candidate.added) score += 40;
+
+  score -= Math.abs(candidate.cy - currentNode.cy) / 100;
+  score -= Math.abs(candidate.cx - currentNode.cx) / 1000;
+  return score;
+}
+
+function isPairedWithCurrent(candidate: FamilyTreeNode, currentNode: FamilyTreeNode) {
   return (
-    localCandidates.find((candidate) => candidate.id === parentId) ||
-    allNodes.find(
-      (candidate) =>
-        candidate.id === parentId &&
-        candidate.spouse?.tid === currentNode.tid,
+    candidate.spouse?.tid === currentNode.tid ||
+    candidate.coparent?.tid === currentNode.tid ||
+    currentNode.spouse?.tid === candidate.tid ||
+    currentNode.coparent?.tid === candidate.tid ||
+    Boolean(
+      currentNode.spouses?.some(
+        (spouse) => spouse.tid === candidate.tid || spouse.id === candidate.id,
+      ),
     ) ||
-    allNodes.find(
-      (candidate) =>
-        candidate.id === parentId &&
-        !candidate.isAncestry &&
-        Math.abs(candidate.cy - currentNode.cy) < 1,
-    ) ||
-    allNodes.find((candidate) => candidate.id === parentId && !candidate.isAncestry) ||
-    allNodes.find((candidate) => candidate.id === parentId)
+    Boolean(
+      candidate.spouses?.some(
+        (spouse) => spouse.tid === currentNode.tid || spouse.id === currentNode.id,
+      ),
+    )
   );
 }
 
@@ -758,6 +860,14 @@ function uniqueNodesById(nodes: FamilyTreeNode[]) {
     if (!byId.has(node.id)) byId.set(node.id, node);
   }
   return Array.from(byId.values());
+}
+
+function uniqueNodesByTid(nodes: FamilyTreeNode[]) {
+  const byTid = new Map<string, FamilyTreeNode>();
+  for (const node of nodes) {
+    if (!byTid.has(node.tid)) byTid.set(node.tid, node);
+  }
+  return Array.from(byTid.values());
 }
 
 function orderParentNodesForLink(
@@ -775,23 +885,113 @@ function orderParentNodesForLink(
 function verticalLink(
   child: { x: number; y: number },
   parent: { x: number; y: number },
+  laneOffset = 0,
 ): [number, number][] {
-  const hy = child.y + (parent.y - child.y) / 2;
+  const baseHy = child.y + (parent.y - child.y) / 2;
+  const minY = Math.min(child.y, parent.y);
+  const maxY = Math.max(child.y, parent.y);
+  const hy =
+    maxY - minY > LINK_BUS_EDGE_PADDING * 2
+      ? clampNumber(
+          baseHy + laneOffset,
+          minY + LINK_BUS_EDGE_PADDING,
+          maxY - LINK_BUS_EDGE_PADDING,
+        )
+      : baseHy;
   return [
     [child.x, child.y],
     [child.x, hy],
-    [child.x, hy],
-    [parent.x, hy],
     [parent.x, hy],
     [parent.x, parent.y],
   ];
 }
 
 function createPath(points: [number, number][], curve: boolean) {
-  const line = d3.line<[number, number]>().curve(
-    curve ? d3.curveBasis : d3.curveMonotoneY,
-  );
-  return line(points) || '';
+  const normalized = normalizePathPoints(points);
+  if (normalized.length === 0) return '';
+  if (!curve || normalized.length <= 2) return straightPath(normalized);
+  return roundedOrthogonalPath(normalized, LINK_CORNER_RADIUS);
+}
+
+function straightPath(points: [number, number][]) {
+  const [start, ...rest] = points;
+  return [
+    `M${formatPathNumber(start[0])},${formatPathNumber(start[1])}`,
+    ...rest.map(
+      ([x, y]) => `L${formatPathNumber(x)},${formatPathNumber(y)}`,
+    ),
+  ].join('');
+}
+
+function roundedOrthogonalPath(points: [number, number][], radius: number) {
+  const [start] = points;
+  const commands = [`M${formatPathNumber(start[0])},${formatPathNumber(start[1])}`];
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const next = points[index + 1];
+    const incoming = distance(previous, current);
+    const outgoing = distance(current, next);
+    const cornerRadius = Math.min(radius, incoming / 2, outgoing / 2);
+
+    if (cornerRadius <= 0 || isStraight(previous, current, next)) {
+      commands.push(`L${formatPathNumber(current[0])},${formatPathNumber(current[1])}`);
+      continue;
+    }
+
+    const startCorner = pointAlong(current, previous, cornerRadius);
+    const endCorner = pointAlong(current, next, cornerRadius);
+    commands.push(
+      `L${formatPathNumber(startCorner[0])},${formatPathNumber(startCorner[1])}`,
+      `Q${formatPathNumber(current[0])},${formatPathNumber(current[1])} ${formatPathNumber(endCorner[0])},${formatPathNumber(endCorner[1])}`,
+    );
+  }
+
+  const end = points[points.length - 1];
+  commands.push(`L${formatPathNumber(end[0])},${formatPathNumber(end[1])}`);
+  return commands.join('');
+}
+
+function normalizePathPoints(points: [number, number][]) {
+  return points.filter((point, index) => {
+    const previous = points[index - 1];
+    return !previous || previous[0] !== point[0] || previous[1] !== point[1];
+  });
+}
+
+function pointAlong(
+  from: [number, number],
+  to: [number, number],
+  distanceToMove: number,
+): [number, number] {
+  const total = distance(from, to);
+  if (total === 0) return from;
+  const ratio = distanceToMove / total;
+  return [
+    from[0] + (to[0] - from[0]) * ratio,
+    from[1] + (to[1] - from[1]) * ratio,
+  ];
+}
+
+function distance(a: [number, number], b: [number, number]) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1]);
+}
+
+function isStraight(
+  a: [number, number],
+  b: [number, number],
+  c: [number, number],
+) {
+  return (a[0] === b[0] && b[0] === c[0]) || (a[1] === b[1] && b[1] === c[1]);
+}
+
+function formatPathNumber(value: number) {
+  return Number(value.toFixed(2)).toString();
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function computeBounds(nodes: FamilyTreeNode[], links: FamilyTreeLink[]) {

@@ -297,12 +297,16 @@
   fill: none;
   stroke: #b9a164;
   stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .linkParent {
   fill: none;
   stroke: #79a6bc;
   stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .linkSingle {
@@ -310,6 +314,8 @@
   stroke: #8b98a5;
   stroke-width: 2;
   stroke-dasharray: 7 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .personCard {

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { layoutFamilyTree } from '@/lib/family-layout';
 import {
   centerViewOnPoint,
@@ -16,6 +15,7 @@ type Props = {
   rootPersonId: string | null;
   selectedPersonId: string | null;
   onSelectPerson: (personId: string) => void;
+  onFocusPerson: (personId: string) => void | Promise<void>;
 };
 
 export default function TreeCanvas({
@@ -23,8 +23,8 @@ export default function TreeCanvas({
   rootPersonId,
   selectedPersonId,
   onSelectPerson,
+  onFocusPerson,
 }: Props) {
-  const router = useRouter();
   const viewportRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 0.9 });
   const dragRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(
@@ -219,9 +219,9 @@ export default function TreeCanvas({
                 onDoubleClick={(event) => {
                   event.stopPropagation();
                   onSelectPerson(node.id);
-                  router.push(`/person/${node.id}`);
+                  void onFocusPerson(node.id);
                 }}
-                title="Double clic pour ouvrir la fiche"
+                title="Double clic pour centrer l'arbre"
               >
                 <div className={styles.personName}>{personLabel(person)}</div>
                 <div className={styles.personMeta}>

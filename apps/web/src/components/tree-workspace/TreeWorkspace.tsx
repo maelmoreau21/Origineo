@@ -174,6 +174,7 @@ export default function TreeWorkspace() {
           rootPersonId={rootPersonId}
           selectedPersonId={selectedPersonId}
           onSelectPerson={setSelectedPersonId}
+          onFocusPerson={(personId) => loadTree(personId, personId)}
         />
 
         <PersonInspector
