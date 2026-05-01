@@ -106,6 +106,9 @@ export interface TreeQueryParams {
   rootPersonId: string;
   ancestorGenerations?: number;
   descendantGenerations?: number;
+  siblings?: boolean;
+  spouses?: boolean;
+  limit?: number;
 }
 
 export interface TreeNodeDto {
@@ -121,6 +124,55 @@ export interface TreeDataDto {
   nodes: TreeNodeDto[];
   relationships: RelationshipDto[];
   unions: UnionDto[];
+}
+
+export interface TreeWindowStatsDto {
+  rootPersonId: string;
+  requestedAncestors: number;
+  requestedDescendants: number;
+  visiblePersons: number;
+  totalCollectedPersons: number;
+  visibleRelationships: number;
+  visibleUnions: number;
+  limit: number;
+  truncated: boolean;
+  includesSiblings: boolean;
+  includesSpouses: boolean;
+}
+
+export interface TreeVisibleNodeDto extends TreeNodeDto {
+  visible: true;
+}
+
+export interface TreeVisibleRelationshipDto extends RelationshipDto {
+  visible: true;
+}
+
+export interface TreeVisibleUnionDto extends UnionDto {
+  visible: true;
+}
+
+export interface TreeWindowDto {
+  rootPersonId: string;
+  nodes: TreeVisibleNodeDto[];
+  relationships: TreeVisibleRelationshipDto[];
+  unions: TreeVisibleUnionDto[];
+  stats: TreeWindowStatsDto;
+}
+
+export interface FamilyChartDatumDto {
+  id: string;
+  data: {
+    gender: 'M' | 'F' | 'O' | 'U';
+    person: PersonDto;
+    generation?: number;
+    label?: string;
+  };
+  rels: {
+    parents?: string[];
+    spouses?: string[];
+    children?: string[];
+  };
 }
 
 // ─── Search ─────────────────────────────────
@@ -244,4 +296,56 @@ export interface MergeResultDto {
   personsSkipped: number;
   relationshipsCreated: number;
   unionsCreated: number;
+}
+
+export type GedcomJobStatus =
+  | 'ANALYZING'
+  | 'READY'
+  | 'APPLYING'
+  | 'DONE'
+  | 'FAILED';
+
+export interface GedcomJobDto {
+  id: string;
+  mode: 'IMPORT' | 'MERGE';
+  status: GedcomJobStatus;
+  filename: string;
+  totalPersons: number;
+  totalFamilies: number;
+  duplicateCount: number;
+  newPersonCount: number;
+  summary: Record<string, unknown> | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface GedcomDuplicateCandidateDto {
+  id: string;
+  stagedPersonId: string;
+  stagedPointer: string;
+  staged: StagedPersonDto;
+  existingPersonId: string;
+  existingPerson: PersonDto;
+  confidence: number;
+  matchReasons: string[];
+}
+
+export interface GedcomApplyDecisionDto {
+  stagedPersonId?: string;
+  stagedPointer?: string;
+  action: 'merge' | 'create' | 'skip';
+  mergeIntoPersonId?: string;
+}
+
+export interface BranchDeletePreviewDto {
+  rootPersonId: string;
+  includeRoot: boolean;
+  simulated: boolean;
+  personsDeleted: number;
+  relationshipsDeleted: number;
+  unionsDeleted: number;
+  documentsDeleted: number;
+  affectedPersonIds?: string[];
 }

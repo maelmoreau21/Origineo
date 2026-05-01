@@ -159,6 +159,13 @@ export class PersonService {
     const birthDate = dto.birthDate ? new Date(dto.birthDate) : null;
     const deathDate = dto.deathDate ? new Date(dto.deathDate) : null;
     this.validatePersonChronology(birthDate, deathDate);
+    const normalizedFields = this.buildNormalizedPersonFields({
+      givenNames: dto.givenNames,
+      usageSurname: dto.usageSurname,
+      birthSurname: dto.birthSurname,
+      birthDate,
+      deathDate,
+    });
 
     // If setting as root default, unset any existing root
     if (dto.isRootDefault) {
@@ -180,6 +187,7 @@ export class PersonService {
         deathPlace: dto.deathPlace,
         professions: dto.professions || [],
         notes: dto.notes,
+        ...normalizedFields,
         nickname: dto.nickname,
         title: dto.title,
         baptismDate: dto.baptismDate ? new Date(dto.baptismDate) : null,
@@ -245,7 +253,15 @@ export class PersonService {
       where: { id },
       include: {
         parentRelationships: {
-          include: { child: true },
+          include: {
+            child: {
+              include: {
+                childRelationships: {
+                  include: { parent: true },
+                },
+              },
+            },
+          },
         },
         childRelationships: {
           include: { parent: true },
@@ -285,6 +301,12 @@ export class PersonService {
       dto.deathDate !== undefined
         ? (dto.deathDate ? new Date(dto.deathDate) : null)
         : existingPerson.deathDate;
+    const nextGivenNames =
+      dto.givenNames !== undefined ? dto.givenNames : existingPerson.givenNames;
+    const nextUsageSurname =
+      dto.usageSurname !== undefined ? dto.usageSurname : existingPerson.usageSurname;
+    const nextBirthSurname =
+      dto.birthSurname !== undefined ? dto.birthSurname : existingPerson.birthSurname;
 
     this.validatePersonChronology(nextBirthDate, nextDeathDate);
 
@@ -324,6 +346,16 @@ export class PersonService {
     if (dto.residences !== undefined) data.residences = dto.residences;
     if (dto.isRootDefault !== undefined)
       data.isRootDefault = dto.isRootDefault;
+    Object.assign(
+      data,
+      this.buildNormalizedPersonFields({
+        givenNames: nextGivenNames,
+        usageSurname: nextUsageSurname,
+        birthSurname: nextBirthSurname,
+        birthDate: nextBirthDate,
+        deathDate: nextDeathDate,
+      }),
+    );
 
     const updated = await this.prisma.person.update({
       where: { id },
@@ -390,7 +422,12 @@ export class PersonService {
     return deleted;
   }
 
-  async removeBranch(rootId: string, includeRoot = true, actor = DEFAULT_ACTOR) {
+  async removeBranch(
+    rootId: string,
+    includeRoot = true,
+    actor = DEFAULT_ACTOR,
+    simulate = false,
+  ) {
     await this.findOne(rootId);
 
     const descendantIds = await this.getDescendantIds(rootId);
@@ -400,47 +437,35 @@ export class PersonService {
 
     if (targetIds.length === 0) {
       return {
+        rootPersonId: rootId,
         personsDeleted: 0,
         relationshipsDeleted: 0,
         unionsDeleted: 0,
         documentsDeleted: 0,
         includeRoot,
+        simulated: simulate,
+        affectedPersonIds: [],
       };
     }
 
-    const [relationshipsDeleted, unionsToDelete] = await this.prisma.$transaction([
-      this.prisma.relationship.count({
-        where: {
-          OR: [
-            { parentId: { in: targetIds } },
-            { childId: { in: targetIds } },
-          ],
-        },
-      }),
-      this.prisma.union.findMany({
-        where: {
-          OR: [
-            { partner1Id: { in: targetIds } },
-            { partner2Id: { in: targetIds } },
-          ],
-        },
-        select: { id: true },
-      }),
-    ]);
+    const deletionPlan = await this.computeDeletionPlan(targetIds);
 
-    const unionIds = unionsToDelete.map((union) => union.id);
-    const unionsDeleted = unionIds.length;
-
-    const documentsDeleteWhere: Prisma.DocumentWhereInput = {
-      OR: [
-        { personId: { in: targetIds } },
-        ...(unionIds.length > 0 ? [{ unionId: { in: unionIds } }] : []),
-      ],
-    };
+    if (simulate) {
+      return {
+        rootPersonId: rootId,
+        personsDeleted: deletionPlan.personsToDelete,
+        relationshipsDeleted: deletionPlan.relationshipsToDelete,
+        unionsDeleted: deletionPlan.unionsToDelete,
+        documentsDeleted: deletionPlan.documentsToDelete,
+        includeRoot,
+        simulated: true,
+        affectedPersonIds: targetIds,
+      };
+    }
 
     const [documentsDeleted, personsDeleted] = await this.prisma.$transaction(
       async (tx) => {
-        const documentsResult = await tx.document.deleteMany({ where: documentsDeleteWhere });
+        const documentsResult = await tx.document.deleteMany({ where: deletionPlan.documentsDeleteWhere });
         const personsResult = await tx.person.deleteMany({ where: { id: { in: targetIds } } });
         return [documentsResult.count, personsResult.count] as const;
       },
@@ -462,19 +487,22 @@ export class PersonService {
         details: {
           includeRoot,
           personsDeleted,
-          relationshipsDeleted,
-          unionsDeleted,
+          relationshipsDeleted: deletionPlan.relationshipsToDelete,
+          unionsDeleted: deletionPlan.unionsToDelete,
           documentsDeleted,
         },
       },
     ]);
 
     return {
+      rootPersonId: rootId,
       personsDeleted,
-      relationshipsDeleted,
-      unionsDeleted,
+      relationshipsDeleted: deletionPlan.relationshipsToDelete,
+      unionsDeleted: deletionPlan.unionsToDelete,
       documentsDeleted,
       includeRoot,
+      simulated: false,
+      affectedPersonIds: targetIds,
     };
   }
 
@@ -1918,6 +1946,31 @@ export class PersonService {
       unionsToDelete: unionIds.length,
       documentsToDelete,
       documentsDeleteWhere,
+    };
+  }
+
+  private buildNormalizedPersonFields(input: {
+    givenNames?: string | null;
+    usageSurname?: string | null;
+    birthSurname?: string | null;
+    birthDate?: Date | null;
+    deathDate?: Date | null;
+  }) {
+    const givenNamesNormalized = input.givenNames
+      ? this.normalizeText(input.givenNames) || null
+      : null;
+    const surname = input.usageSurname || input.birthSurname || null;
+    const surnameNormalized = surname ? this.normalizeText(surname) || null : null;
+    const primaryNameNormalized =
+      this.normalizeText([input.givenNames, surname].filter(Boolean).join(' ')) ||
+      null;
+
+    return {
+      givenNamesNormalized,
+      surnameNormalized,
+      primaryNameNormalized,
+      birthYear: input.birthDate?.getFullYear() || null,
+      deathYear: input.deathDate?.getFullYear() || null,
     };
   }
 

@@ -21,6 +21,12 @@ interface TreePerson {
   generation: number;
 }
 
+interface TreeWindowOptions {
+  includeSiblings?: boolean;
+  includeSpouses?: boolean;
+  limit?: number;
+}
+
 @Injectable()
 export class TreeService {
   constructor(private readonly prisma: PrismaService) {}
@@ -33,7 +39,12 @@ export class TreeService {
     rootPersonId: string,
     ancestorGenerations = 4,
     descendantGenerations = 2,
+    options: TreeWindowOptions = {},
   ) {
+    const includeSiblings = options.includeSiblings ?? true;
+    const includeSpouses = options.includeSpouses ?? true;
+    const limit = Math.max(25, Math.min(5000, Math.floor(options.limit || 1200)));
+
     // Verify root person exists
     const rootPerson = await this.prisma.person.findUnique({
       where: { id: rootPersonId },
@@ -57,35 +68,74 @@ export class TreeService {
     ancestors.forEach((a) => allPersonIds.add(a.id));
     descendants.forEach((d) => allPersonIds.add(d.id));
 
+    // Include siblings of the root person (children of root's parents)
+    const rootParents = ancestors.filter(a => a.generation === 1).map(a => a.id);
+    if (includeSiblings && rootParents.length > 0) {
+      const siblingRels = await this.prisma.relationship.findMany({
+        where: { parentId: { in: rootParents } },
+        select: { childId: true },
+      });
+      siblingRels.forEach(r => allPersonIds.add(r.childId));
+    }
+
     const personIds = Array.from(allPersonIds);
 
-    // Fetch all relationships between these persons
+    // Fetch all unions involving these persons (no AND constraint)
+    const initialUnions = includeSpouses
+      ? await this.prisma.union.findMany({
+          where: {
+            OR: [
+              { partner1Id: { in: personIds } },
+              { partner2Id: { in: personIds } },
+            ],
+          },
+        })
+      : [];
+
+    initialUnions.forEach((u) => {
+      allPersonIds.add(u.partner1Id);
+      allPersonIds.add(u.partner2Id);
+    });
+
+    // Also include co-parents of any child in the tree
+    if (includeSpouses) {
+      const childRelationships = await this.prisma.relationship.findMany({
+        where: { childId: { in: personIds } },
+      });
+      childRelationships.forEach((r) => allPersonIds.add(r.parentId));
+    }
+
+    const collectedPersonIds = Array.from(allPersonIds);
+    const updatedPersonIds = this.applyWindowLimit(
+      rootPersonId,
+      collectedPersonIds,
+      limit,
+    );
+    const visiblePersonIds = new Set(updatedPersonIds);
+
+    // Fetch all relationships between the updated person set
     const relationships = await this.prisma.relationship.findMany({
       where: {
         AND: [
-          { parentId: { in: personIds } },
-          { childId: { in: personIds } },
+          { parentId: { in: updatedPersonIds } },
+          { childId: { in: updatedPersonIds } },
         ],
       },
     });
 
-    // Fetch all unions involving these persons
+    // Fetch all unions between the updated person set
     const unions = await this.prisma.union.findMany({
       where: {
-        OR: [
-          { partner1Id: { in: personIds } },
-          { partner2Id: { in: personIds } },
-        ],
         AND: [
-          { partner1Id: { in: personIds } },
-          { partner2Id: { in: personIds } },
+          { partner1Id: { in: updatedPersonIds } },
+          { partner2Id: { in: updatedPersonIds } },
         ],
       },
     });
 
     // Fetch full person records
     const persons = await this.prisma.person.findMany({
-      where: { id: { in: personIds } },
+      where: { id: { in: updatedPersonIds } },
     });
 
     const unionsByPerson = new Map<string, (typeof unions)[number][]>();
@@ -125,15 +175,47 @@ export class TreeService {
         unions: unionsByPerson.get(person.id) || [],
         parents: parentsByChild.get(person.id) || [],
         children: childrenByParent.get(person.id) || [],
+        visible: true,
       };
     });
 
     return {
       rootPersonId,
       nodes,
-      relationships,
-      unions,
+      relationships: relationships.map((relationship) => ({
+        ...relationship,
+        visible: true,
+      })),
+      unions: unions.map((union) => ({
+        ...union,
+        visible: true,
+      })),
+      stats: {
+        rootPersonId,
+        requestedAncestors: ancestorGenerations,
+        requestedDescendants: descendantGenerations,
+        visiblePersons: visiblePersonIds.size,
+        totalCollectedPersons: collectedPersonIds.length,
+        visibleRelationships: relationships.length,
+        visibleUnions: unions.length,
+        limit,
+        truncated: collectedPersonIds.length > visiblePersonIds.size,
+        includesSiblings: includeSiblings,
+        includesSpouses: includeSpouses,
+      },
     };
+  }
+
+  private applyWindowLimit(rootPersonId: string, ids: string[], limit: number) {
+    if (ids.length <= limit) return ids;
+
+    const result = [rootPersonId];
+    for (const id of ids) {
+      if (id === rootPersonId) continue;
+      if (result.length >= limit) break;
+      result.push(id);
+    }
+    return result;
   }
 
   /**

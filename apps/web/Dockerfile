@@ -12,15 +12,15 @@ FROM base AS deps
 # Copy root workspace files
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 # Copy all package.json files to satisfy pnpm workspace requirements
-COPY apps/web/package.json ./apps/web/
-COPY apps/api/package.json ./apps/api/
-COPY packages/shared/package.json ./packages/shared/
+COPY apps/web/package.json apps/web/package.json
+COPY apps/api/package.json apps/api/package.json
+COPY packages/shared/package.json packages/shared/package.json
 RUN pnpm install --frozen-lockfile || pnpm install
 
 # ─── Development ─────────────────────
 FROM deps AS development
-COPY apps/web ./apps/web/
-COPY packages/shared ./packages/shared/
+COPY apps/web apps/web
+COPY packages/shared packages/shared
 WORKDIR /app/apps/web
 # Ensure local dependencies are installed
 RUN pnpm install
@@ -29,8 +29,8 @@ CMD ["pnpm", "exec", "next", "dev", "-H", "0.0.0.0", "-p", "3000"]
 
 # ─── Builder ─────────────────────────
 FROM deps AS builder
-COPY apps/web ./apps/web/
-COPY packages/shared ./packages/shared/
+COPY apps/web apps/web
+COPY packages/shared packages/shared
 WORKDIR /app/apps/web
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm run build

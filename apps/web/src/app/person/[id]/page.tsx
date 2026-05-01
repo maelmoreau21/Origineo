@@ -85,6 +85,11 @@ function roleFromJwt(token: string): string | null {
   }
 }
 
+function personDisplayName(person: any) {
+  if (!person) return '';
+  return person.givenNames + (person.usageSurname ? ` ${person.usageSurname}` : person.birthSurname ? ` ${person.birthSurname}` : '');
+}
+
 export default function PersonPage() {
   const params = useParams();
   const personId = params?.id as string;
@@ -150,7 +155,7 @@ export default function PersonPage() {
     );
   }
 
-  const displayName = person.givenNames + (person.usageSurname ? ` ${person.usageSurname}` : person.birthSurname ? ` ${person.birthSurname}` : '');
+  const displayName = personDisplayName(person);
 
   const parents =
     person.childRelationships?.map((r: any) => r.parent).filter(Boolean) || [];
@@ -176,6 +181,35 @@ export default function PersonPage() {
     const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
     return bCreated - aCreated;
   });
+
+  const spousePartnerMap = new Map<string, any>();
+  unions.forEach((union: any) => {
+    if (!union.partner?.id || spousePartnerMap.has(union.partner.id)) {
+      return;
+    }
+
+    spousePartnerMap.set(union.partner.id, union.partner);
+  });
+
+  children.forEach((child: any) => {
+    const childParentRelationships = Array.isArray(child?.childRelationships)
+      ? child.childRelationships
+      : [];
+
+    childParentRelationships.forEach((relationship: any) => {
+      const coParent = relationship?.parent;
+
+      if (!coParent?.id || coParent.id === person.id || spousePartnerMap.has(coParent.id)) {
+        return;
+      }
+
+      spousePartnerMap.set(coParent.id, coParent);
+    });
+  });
+
+  const spousePartners = Array.from(spousePartnerMap.values()).sort((a: any, b: any) =>
+    personDisplayName(a).localeCompare(personDisplayName(b), 'fr', { sensitivity: 'base' }),
+  );
 
   const refreshPerson = async () => {
     const result = await personApi.getById(personId);
@@ -206,6 +240,35 @@ export default function PersonPage() {
                 {person.gender === 'MALE' ? 'Homme' : person.gender === 'FEMALE' ? 'Femme' : 'Inconnu'}
               </span>
               {person.isRootDefault && <span className="badge badge-accent">Racine</span>}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)' }}>Conjoint(s):</span>
+              {spousePartners.length === 0 ? (
+                <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}>Aucun conjoint connu</span>
+              ) : (
+                spousePartners.map((partner: any) => (
+                  <a
+                    key={partner.id}
+                    href={`/person/${partner.id}`}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 'var(--space-1)',
+                      padding: '4px 10px',
+                      borderRadius: 'var(--radius-full)',
+                      border: '1px solid hsla(45, 100%, 45%, 0.35)',
+                      background: 'hsla(45, 100%, 50%, 0.12)',
+                      color: 'var(--color-text-primary)',
+                      textDecoration: 'none',
+                      fontSize: 'var(--text-xs)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <span>💍</span>
+                    <span>{personDisplayName(partner) || `Personne ${partner.id.slice(0, 8)}`}</span>
+                  </a>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -939,7 +1002,7 @@ function InfoRow({ label, value }: { label: string; value: string | null | undef
 }
 
 function PersonLink({ person }: { person: any }) {
-  const name = person.givenNames + (person.usageSurname ? ` ${person.usageSurname}` : person.birthSurname ? ` ${person.birthSurname}` : '');
+  const name = personDisplayName(person);
 
   return (
     <a

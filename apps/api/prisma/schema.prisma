@@ -54,6 +54,25 @@ enum UserRole {
   VISITOR
 }
 
+enum GedcomJobMode {
+  IMPORT
+  MERGE
+}
+
+enum GedcomJobStatus {
+  ANALYZING
+  READY
+  APPLYING
+  DONE
+  FAILED
+}
+
+enum GedcomDecisionAction {
+  MERGE
+  CREATE
+  SKIP
+}
+
 // ─── Models ─────────────────────────────────
 
 model Person {
@@ -68,6 +87,11 @@ model Person {
   deathPlace    String?   @map("death_place")
   professions   String[]  @default([])
   notes         String?   @db.Text
+  givenNamesNormalized   String? @map("given_names_normalized")
+  surnameNormalized      String? @map("surname_normalized")
+  primaryNameNormalized  String? @map("primary_name_normalized")
+  birthYear              Int?    @map("birth_year")
+  deathYear              Int?    @map("death_year")
   // Nouveaux champs professionnels (Heredis-like)
   nickname            String?
   title               String?
@@ -96,6 +120,11 @@ model Person {
   @@index([birthSurname])
   @@index([usageSurname])
   @@index([givenNames])
+  @@index([givenNamesNormalized])
+  @@index([surnameNormalized])
+  @@index([primaryNameNormalized])
+  @@index([birthYear])
+  @@index([deathYear])
   @@index([birthDate])
   @@map("persons")
 }
@@ -182,4 +211,92 @@ model SystemSetting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("system_settings")
+}
+
+model GedcomJob {
+  id             String          @id @default(uuid()) @db.Uuid
+  mode           GedcomJobMode
+  status         GedcomJobStatus @default(ANALYZING)
+  filename       String
+  totalPersons   Int             @default(0) @map("total_persons")
+  totalFamilies  Int             @default(0) @map("total_families")
+  duplicateCount Int             @default(0) @map("duplicate_count")
+  newPersonCount Int             @default(0) @map("new_person_count")
+  summary        Json?
+  error          String?         @db.Text
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  completedAt    DateTime?       @map("completed_at")
+
+  stagedPersons GedcomStagedPerson[]
+  stagedFamilies GedcomStagedFamily[]
+
+  @@index([mode])
+  @@index([status])
+  @@index([createdAt])
+  @@map("gedcom_jobs")
+}
+
+model GedcomStagedPerson {
+  id                   String                @id @default(uuid()) @db.Uuid
+  jobId                String                @map("job_id") @db.Uuid
+  pointer              String
+  givenNames           String                @map("given_names")
+  surname              String?
+  gender               Gender                @default(UNKNOWN)
+  birthDateRaw         String?               @map("birth_date_raw")
+  birthPlace           String?               @map("birth_place")
+  deathDateRaw         String?               @map("death_date_raw")
+  deathPlace           String?               @map("death_place")
+  notes                String?               @db.Text
+  normalizedGivenNames String?               @map("normalized_given_names")
+  normalizedSurname    String?               @map("normalized_surname")
+  birthYear            Int?                  @map("birth_year")
+  bestExistingPersonId String?               @map("best_existing_person_id") @db.Uuid
+  bestConfidence       Int?                  @map("best_confidence")
+  decision             GedcomDecisionAction?
+  mergeIntoPersonId    String?               @map("merge_into_person_id") @db.Uuid
+  createdPersonId      String?               @map("created_person_id") @db.Uuid
+
+  job        GedcomJob                  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  candidates GedcomDuplicateCandidate[]
+
+  @@unique([jobId, pointer])
+  @@index([jobId])
+  @@index([normalizedSurname])
+  @@index([normalizedGivenNames])
+  @@index([birthYear])
+  @@index([bestExistingPersonId])
+  @@map("gedcom_staged_persons")
+}
+
+model GedcomStagedFamily {
+  id              String   @id @default(uuid()) @db.Uuid
+  jobId           String   @map("job_id") @db.Uuid
+  pointer         String
+  husbandPointer  String?  @map("husband_pointer")
+  wifePointer     String?  @map("wife_pointer")
+  childPointers   String[] @default([]) @map("child_pointers")
+  marriageDateRaw String?  @map("marriage_date_raw")
+  marriagePlace   String?  @map("marriage_place")
+
+  job GedcomJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, pointer])
+  @@index([jobId])
+  @@map("gedcom_staged_families")
+}
+
+model GedcomDuplicateCandidate {
+  id               String @id @default(uuid()) @db.Uuid
+  stagedPersonId   String @map("staged_person_id") @db.Uuid
+  existingPersonId String @map("existing_person_id") @db.Uuid
+  confidence       Int
+  matchReasons     Json   @map("match_reasons")
+
+  stagedPerson GedcomStagedPerson @relation(fields: [stagedPersonId], references: [id], onDelete: Cascade)
+
+  @@unique([stagedPersonId, existingPersonId])
+  @@index([existingPersonId])
+  @@map("gedcom_duplicate_candidates")
 }

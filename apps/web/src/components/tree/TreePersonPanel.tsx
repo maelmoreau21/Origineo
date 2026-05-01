@@ -38,6 +38,12 @@ function fmt(p:any){
 function dn(p:any){if(!p)return'';const n=fmt(p);const s=n.usageSurname||n.birthSurname||'';return`${n.givenNames}${s?` ${s}`:''}`.trim();}
 function initials(p:any){const n=fmt(p);const parts=[n.givenNames,n.usageSurname||n.birthSurname||''].filter(Boolean);return parts.map(s=>s[0]).join('').toUpperCase().slice(0,2);}
 function fdate(v:string|null){if(!v)return null;try{return new Date(v).toLocaleDateString('fr-FR');}catch{return v;}}
+function unionTypeLabel(type?:string|null){
+  if(type==='MARRIAGE')return'Mariage';
+  if(type==='PACS')return'PACS';
+  if(type==='PARTNERSHIP')return'Partenariat';
+  return'Union';
+}
 
 type Tab = 'INFO' | 'FAMILY' | 'DOCS';
 
@@ -187,6 +193,37 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
   const genderColor=p.gender==='MALE'?'hsl(210,70%,55%)':p.gender==='FEMALE'?'hsl(330,65%,55%)':'hsl(220,12%,55%)';
   const genderBg=p.gender==='MALE'?'hsla(210,70%,55%,0.12)':p.gender==='FEMALE'?'hsla(330,65%,55%,0.12)':'hsla(220,12%,55%,0.08)';
   const profileUrl=documentApi.profilePhotoUrl(personId)+'?v='+profileKey;
+  const spouseById=new Map<string,{id:string;partnerId:string;partner:any;typeLabel:string}>();
+  unions.forEach((union:any)=>{
+    const isPartner1=union.partner1Id===personId;
+    const partnerId=(isPartner1?union.partner2Id:union.partner1Id) as string|undefined;
+    if(!partnerId||spouseById.has(partnerId))return;
+    spouseById.set(partnerId,{
+      id:union.id,
+      partnerId,
+      partner:isPartner1?union.partner2:union.partner1,
+      typeLabel:unionTypeLabel(union.type),
+    });
+  });
+  childrenFromApi.forEach((relation:any)=>{
+    const childLinks=Array.isArray(relation?.child?.childRelationships)
+      ? relation.child.childRelationships
+      : [];
+    childLinks.forEach((childLink:any)=>{
+      const coParent=childLink?.parent;
+      const coParentId=coParent?.id as string|undefined;
+      if(!coParentId||coParentId===personId||spouseById.has(coParentId))return;
+      spouseById.set(coParentId,{
+        id:`coparent-${coParentId}`,
+        partnerId:coParentId,
+        partner:coParent,
+        typeLabel:'Co-parent',
+      });
+    });
+  });
+  const spouseEntries=Array.from(spouseById.values()).sort((a,b)=>
+    dn(a.partner).localeCompare(dn(b.partner),'fr',{sensitivity:'base'})
+  );
 
   return(<>
     <aside className="tpp">
@@ -203,6 +240,24 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
           <div className="tpp-meta">
             <span style={{color:genderColor}}>{p.gender==='MALE'?'♂ Homme':p.gender==='FEMALE'?'♀ Femme':'◯ Inconnu'}</span>
             {p.birthDate&&<span>· Né{p.gender==='FEMALE'?'e':''} le {fdate(p.birthDate)}</span>}
+          </div>
+          <div className="tpp-spouses-strip">
+            <div className="tpp-spouses-label">Conjoint(s)</div>
+            {spouseEntries.length===0?(
+              <div className="tpp-spouses-empty">Aucun conjoint connu</div>
+            ):(
+              <div className="tpp-spouses-list">
+                {spouseEntries.map((entry)=>{
+                  const label=dn(entry.partner)||`Personne ${entry.partnerId.slice(0,8)}`;
+                  return(
+                    <a key={entry.id} href={`/person/${entry.partnerId}`} className="tpp-spouse-chip">
+                      <span>💍 {label}</span>
+                      <span className="tpp-spouse-chip-type">{entry.typeLabel}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <div className="tpp-actions">
             <button className="tpp-btn tpp-btn-accent" onClick={onCenterOnPerson}>🎯 Centrer</button>
@@ -339,7 +394,7 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
                   <div key={u.id} className="tpp-union-block">
                     <div className="tpp-union-header">
                       <span>💍 {dn(partner)||'Partenaire'}</span>
-                      <span className="tpp-badge">{u.type==='MARRIAGE'?'Mariage':u.type==='PACS'?'PACS':u.type==='PARTNERSHIP'?'Partenariat':'Union'}</span>
+                      <span className="tpp-badge">{unionTypeLabel(u.type)}</span>
                     </div>
                   </div>
                 );
@@ -417,6 +472,13 @@ export default function TreePersonPanel({person,personId,isAdmin,onClose,onCente
       .tpp-avatar:hover .tpp-avatar-overlay{opacity:1;}
       .tpp-name{font-size:1.1rem;font-weight:700;color:var(--color-text-primary);text-align:center;margin:0;line-height:1.2;}
       .tpp-meta{font-size:0.75rem;color:var(--color-text-secondary);display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
+      .tpp-spouses-strip{width:100%;padding:8px 10px;border-radius:10px;background:hsla(220,20%,16%,0.5);border:1px solid hsla(220,20%,28%,0.35);display:grid;gap:6px;}
+      .tpp-spouses-label{font-size:0.62rem;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.05em;font-weight:700;}
+      .tpp-spouses-empty{font-size:0.72rem;color:var(--color-text-muted);font-style:italic;}
+      .tpp-spouses-list{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;}
+      .tpp-spouse-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;border:1px solid hsla(200,80%,50%,0.28);background:hsla(200,80%,50%,0.12);color:hsl(200,80%,70%);font-size:0.68rem;font-weight:600;text-decoration:none;transition:all 120ms ease;}
+      .tpp-spouse-chip:hover{background:hsla(200,80%,50%,0.22);color:hsl(200,90%,80%);}
+      .tpp-spouse-chip-type{font-size:0.58rem;padding:1px 5px;border-radius:999px;background:hsla(0,0%,100%,0.14);color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.03em;}
       .tpp-actions{display:flex;gap:4px;margin-top:4px;}
       .tpp-btn{padding:5px 10px;border-radius:7px;border:1px solid hsla(220,20%,28%,0.5);background:hsla(220,20%,18%,0.6);color:var(--color-text-secondary);font-size:0.7rem;cursor:pointer;transition:all 120ms ease;white-space:nowrap;}
       .tpp-btn:hover:not(:disabled){background:hsla(220,20%,24%,0.8);color:var(--color-text-primary);}

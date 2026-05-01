@@ -682,23 +682,43 @@ export class GedcomMergeService {
       updates.notes = staged.notes;
     }
 
-    if (Object.keys(updates).length > 0) {
-      await tx.person.update({ where: { id: personId }, data: updates });
-    }
+    const next = { ...existing, ...updates };
+    Object.assign(
+      updates,
+      this.normalizedPersonFields({
+        givenNames: next.givenNames,
+        usageSurname: next.usageSurname,
+        birthSurname: next.birthSurname,
+        birthDate: next.birthDate,
+        deathDate: next.deathDate,
+      }),
+    );
+
+    await tx.person.update({ where: { id: personId }, data: updates });
   }
 
   private async createPersonFromStaged(tx: any, staged: StagedPerson) {
+    const birthDate = this.parseGedcomDate(staged.birthDate);
+    const deathDate = this.parseGedcomDate(staged.deathDate);
+
     return tx.person.create({
       data: {
         givenNames: staged.givenNames || 'Unknown',
         birthSurname: staged.surname || null,
         usageSurname: staged.surname || null,
         gender: staged.gender,
-        birthDate: this.parseGedcomDate(staged.birthDate),
+        birthDate,
         birthPlace: staged.birthPlace || null,
-        deathDate: this.parseGedcomDate(staged.deathDate),
+        deathDate,
         deathPlace: staged.deathPlace || null,
         notes: staged.notes || null,
+        ...this.normalizedPersonFields({
+          givenNames: staged.givenNames || 'Unknown',
+          usageSurname: staged.surname || null,
+          birthSurname: staged.surname || null,
+          birthDate,
+          deathDate,
+        }),
       },
     });
   }
@@ -750,6 +770,27 @@ export class GedcomMergeService {
       bigrams.set(bg, (bigrams.get(bg) || 0) + 1);
     }
     return bigrams;
+  }
+
+  private normalizedPersonFields(input: {
+    givenNames?: string | null;
+    usageSurname?: string | null;
+    birthSurname?: string | null;
+    birthDate?: Date | null;
+    deathDate?: Date | null;
+  }) {
+    const surname = input.usageSurname || input.birthSurname || null;
+    return {
+      givenNamesNormalized: input.givenNames
+        ? this.normalize(input.givenNames) || null
+        : null,
+      surnameNormalized: surname ? this.normalize(surname) || null : null,
+      primaryNameNormalized:
+        this.normalize([input.givenNames, surname].filter(Boolean).join(' ')) ||
+        null,
+      birthYear: input.birthDate?.getFullYear() || null,
+      deathYear: input.deathDate?.getFullYear() || null,
+    };
   }
 
   // ─── GEDCOM Parsing ────────────────────────

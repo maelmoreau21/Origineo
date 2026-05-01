@@ -83,8 +83,8 @@ export const personApi = {
       token,
     }),
 
-  deleteBranch: (id: string, token: string, includeRoot = true) =>
-    apiFetch<any>(`/persons/${id}/branch?includeRoot=${includeRoot}`, {
+  deleteBranch: (id: string, token: string, includeRoot = true, simulate = false) =>
+    apiFetch<any>(`/persons/${id}/branch?includeRoot=${includeRoot}&simulate=${simulate}`, {
       method: 'DELETE',
       token,
     }),
@@ -177,10 +177,23 @@ export const personApi = {
 
 // ─── Tree API ────────────────────────────────
 export const treeApi = {
-  getTree: (rootPersonId: string, ancestors = 4, descendants = 2) =>
-    apiFetch<any>(
-      `/tree/${rootPersonId}?ancestors=${ancestors}&descendants=${descendants}`,
-    ),
+  getTree: (
+    rootPersonId: string,
+    ancestors = 4,
+    descendants = 2,
+    options: { siblings?: boolean; spouses?: boolean; limit?: number } = {},
+  ) => {
+    const params = new URLSearchParams({
+      ancestors: String(ancestors),
+      descendants: String(descendants),
+      siblings: String(options.siblings ?? true),
+      spouses: String(options.spouses ?? true),
+      limit: String(options.limit ?? 1200),
+    });
+    return apiFetch<any>(
+      `/tree/${rootPersonId}?${params.toString()}`,
+    );
+  },
 
   getRelationshipPath: (personAId: string, personBId: string) =>
     apiFetch<any>(`/tree/relationship/${personAId}/${personBId}`),
@@ -404,6 +417,39 @@ export const gedcomApi = {
       body: JSON.stringify({ sessionId, decisions }),
       token,
     }),
+
+  createJob: async (file: File, mode: 'import' | 'merge', token: string) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE}/api/gedcom/jobs?mode=${mode}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Job failed' }));
+      throw new Error(error.message);
+    }
+
+    return response.json();
+  },
+
+  getJob: (jobId: string, token: string) =>
+    apiFetch<any>(`/gedcom/jobs/${jobId}`, { token }),
+
+  getJobCandidates: (jobId: string, token: string, page = 1, limit = 25) =>
+    apiFetch<any>(`/gedcom/jobs/${jobId}/candidates?page=${page}&limit=${limit}`, {
+      token,
+    }),
+
+  applyJob: (jobId: string, decisions: any[], token: string) =>
+    apiFetch<any>(`/gedcom/jobs/${jobId}/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ decisions }),
+      token,
+    }),
 };
 
 // ─── Document API ────────────────────────────
@@ -487,4 +533,3 @@ export const documentApi = {
   hasProfilePhoto: (personId: string) =>
     apiFetch<any>(`/documents/profile-photo/${personId}/exists`),
 };
-

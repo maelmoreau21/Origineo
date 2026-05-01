@@ -48,6 +48,9 @@ export class SearchService {
 
     const offset = (safePage - 1) * safeLimit;
     const searchTerm = this.normalizeOptionalString(filters.q);
+    const normalizedSearchTerm = searchTerm
+      ? this.normalizeForIndex(searchTerm)
+      : null;
     const place = this.normalizeOptionalString(filters.place);
     const gender = this.normalizeGender(filters.gender);
     const birthDateFrom = this.parseOptionalDate(filters.birthDateFrom, 'birthDateFrom');
@@ -81,8 +84,18 @@ export class SearchService {
 
     if (searchTerm) {
       const likePattern = `%${searchTerm}%`;
+      const normalizedLikePattern = `%${normalizedSearchTerm}%`;
       conditions.push(Prisma.sql`
         (
+          p.primary_name_normalized % ${normalizedSearchTerm}
+          OR p.surname_normalized % ${normalizedSearchTerm}
+          OR p.given_names_normalized % ${normalizedSearchTerm}
+          OR p.primary_name_normalized ILIKE ${normalizedLikePattern}
+          OR p.surname_normalized ILIKE ${normalizedLikePattern}
+          OR p.given_names_normalized ILIKE ${normalizedLikePattern}
+          OR p.birth_year::text = ${normalizedSearchTerm}
+          OR p.death_year::text = ${normalizedSearchTerm}
+          OR
           p.given_names % ${searchTerm}
           OR p.birth_surname % ${searchTerm}
           OR p.usage_surname % ${searchTerm}
@@ -140,6 +153,9 @@ export class SearchService {
     const similarityExpression = searchTerm
       ? Prisma.sql`
         GREATEST(
+          COALESCE(similarity(p.primary_name_normalized, ${normalizedSearchTerm}), 0),
+          COALESCE(similarity(p.surname_normalized, ${normalizedSearchTerm}), 0),
+          COALESCE(similarity(p.given_names_normalized, ${normalizedSearchTerm}), 0),
           COALESCE(similarity(p.given_names, ${searchTerm}), 0),
           COALESCE(similarity(p.birth_surname, ${searchTerm}), 0),
           COALESCE(similarity(p.usage_surname, ${searchTerm}), 0),
@@ -184,6 +200,16 @@ export class SearchService {
     if (!value) return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private normalizeForIndex(value: string) {
+    return value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   private normalizeGender(value?: string | null) {

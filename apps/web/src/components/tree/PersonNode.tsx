@@ -127,7 +127,9 @@ function PersonNode({ data }: NodeProps) {
 
   return (
     <>
-      <Handle type="target" position={Position.Top} />
+      <Handle type="target" position={Position.Top} id="top" />
+      <Handle type="source" position={Position.Right} id="right" style={{ top: '50%' }} />
+      <Handle type="target" position={Position.Left} id="left" style={{ top: '50%' }} />
 
       <div
         className={`person-node ${genderClass} ${isRoot ? 'person-node--root' : ''}`}
@@ -264,9 +266,19 @@ function PersonNode({ data }: NodeProps) {
         )}
       </div>
 
-      <Handle type="source" position={Position.Bottom} />
+      <Handle type="source" position={Position.Bottom} id="bottom" />
 
       <style>{`
+        /* Hide handle dots — they're only used as connection anchors */
+        .react-flow__handle {
+          width: 1px !important;
+          height: 1px !important;
+          min-width: 0 !important;
+          min-height: 0 !important;
+          opacity: 0 !important;
+          pointer-events: none;
+        }
+
         .person-node {
           background: var(--color-bg-secondary);
           border: 2px solid var(--color-border);

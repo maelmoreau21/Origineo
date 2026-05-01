@@ -265,19 +265,31 @@ export class PersonController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a branch from a person (descendants + optional root person)' })
   @ApiQuery({ name: 'includeRoot', required: false, type: Boolean, description: 'true by default. If false, keeps selected person and deletes descendants only.' })
+  @ApiQuery({ name: 'simulate', required: false, type: Boolean, description: 'Preview impacted persons, relationships, unions and documents without deleting.' })
   async removeBranch(
     @Request() req: any,
     @Param('id', ParseUUIDPipe) id: string,
     @Query('includeRoot') includeRoot?: string,
+    @Query('simulate') simulate?: string,
   ) {
     const shouldIncludeRoot = includeRoot === undefined
       ? true
       : this.parseBooleanQuery(includeRoot, 'includeRoot');
+    const shouldSimulate = simulate === undefined
+      ? false
+      : this.parseBooleanQuery(simulate, 'simulate');
 
     return {
       success: true,
-      data: await this.personService.removeBranch(id, shouldIncludeRoot, req.user?.email),
-      message: shouldIncludeRoot
+      data: await this.personService.removeBranch(
+        id,
+        shouldIncludeRoot,
+        req.user?.email,
+        shouldSimulate,
+      ),
+      message: shouldSimulate
+        ? 'Branch delete preview generated'
+        : shouldIncludeRoot
         ? 'Branch deleted successfully'
         : 'Descendants deleted successfully',
     };

@@ -6,6 +6,7 @@ import {
   Controller,
   Post,
   Get,
+  Param,
   Query,
   Body,
   UseGuards,
@@ -13,6 +14,7 @@ import {
   UploadedFile,
   Res,
   BadRequestException,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -25,6 +27,7 @@ import {
 import { Response } from 'express';
 import { GedcomService } from './gedcom.service';
 import { GedcomMergeService, MergeDecision } from './gedcom-merge.service';
+import { GedcomJobService } from './gedcom-job.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -35,6 +38,7 @@ export class GedcomController {
   constructor(
     private readonly gedcomService: GedcomService,
     private readonly gedcomMergeService: GedcomMergeService,
+    private readonly gedcomJobService: GedcomJobService,
   ) {}
 
   // ─── Basic Import (overwrite mode) ─────────
@@ -44,15 +48,9 @@ export class GedcomController {
   @ApiBearerAuth()
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Import a GEDCOM (.ged) file (creates all new)' })
+  @ApiOperation({ summary: 'Import a GEDCOM (.ged/.gedcom) file (creates all new)' })
   async importGedcom(@UploadedFile() file: Express.Multer.File) {
-    if (!file) {
-      throw new BadRequestException('No file uploaded');
-    }
-
-    if (!file.originalname.toLowerCase().endsWith('.ged')) {
-      throw new BadRequestException('File must be a .ged file');
-    }
+    this.assertGedcomFile(file);
 
     return {
       success: true,
@@ -73,13 +71,7 @@ export class GedcomController {
       'Analyze a GEDCOM file for merge: detect duplicates and return candidates',
   })
   async mergeAnalyze(@UploadedFile() file: Express.Multer.File) {
-    if (!file) {
-      throw new BadRequestException('No file uploaded');
-    }
-
-    if (!file.originalname.toLowerCase().endsWith('.ged')) {
-      throw new BadRequestException('File must be a .ged file');
-    }
+    this.assertGedcomFile(file);
 
     return {
       success: true,
@@ -120,6 +112,81 @@ export class GedcomController {
     };
   }
 
+  @Post('jobs')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Create a persisted GEDCOM import or merge job' })
+  @ApiQuery({ name: 'mode', required: false, enum: ['import', 'merge'] })
+  async createJob(
+    @UploadedFile() file: Express.Multer.File,
+    @Query('mode') mode: 'import' | 'merge' = 'import',
+  ) {
+    this.assertGedcomFile(file);
+
+    return {
+      success: true,
+      data: await this.gedcomJobService.createJob(
+        file.buffer,
+        file.originalname,
+        mode,
+      ),
+      message: 'GEDCOM job created',
+    };
+  }
+
+  @Get('jobs/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get a GEDCOM job status' })
+  async getJob(@Param('id', ParseUUIDPipe) id: string) {
+    return {
+      success: true,
+      data: await this.gedcomJobService.getJob(id),
+    };
+  }
+
+  @Get('jobs/:id/candidates')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get duplicate candidates for a GEDCOM job' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getJobCandidates(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return {
+      success: true,
+      data: await this.gedcomJobService.getCandidates(
+        id,
+        this.parsePositiveInt(page, 1, 10_000),
+        this.parsePositiveInt(limit, 25, 100),
+      ),
+    };
+  }
+
+  @Post('jobs/:id/apply')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Apply decisions for a GEDCOM job' })
+  async applyJob(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { decisions?: MergeDecision[] },
+  ) {
+    return {
+      success: true,
+      data: await this.gedcomJobService.applyJob(id, body.decisions || []),
+      message: 'GEDCOM job applied',
+    };
+  }
+
   // ─── Export ────────────────────────────────
   @Get('export')
   @ApiOperation({ summary: 'Export tree as GEDCOM 5.5.1 file' })
@@ -149,5 +216,27 @@ export class GedcomController {
       `attachment; filename="${filename}"`,
     );
     res.send(content);
+  }
+
+  private assertGedcomFile(file?: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    const name = file.originalname.toLowerCase();
+    if (!name.endsWith('.ged') && !name.endsWith('.gedcom')) {
+      throw new BadRequestException('File must be a .ged or .gedcom file');
+    }
+  }
+
+  private parsePositiveInt(
+    value: string | undefined,
+    fallback: number,
+    max: number,
+  ) {
+    if (!value) return fallback;
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.min(parsed, max);
   }
 }

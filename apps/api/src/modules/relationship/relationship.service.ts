@@ -120,7 +120,15 @@ export class RelationshipService {
     return {
       asParent: await this.prisma.relationship.findMany({
         where: { parentId: personId },
-        include: { child: true },
+        include: {
+          child: {
+            include: {
+              childRelationships: {
+                include: { parent: true },
+              },
+            },
+          },
+        },
       }),
       asChild: await this.prisma.relationship.findMany({
         where: { childId: personId },

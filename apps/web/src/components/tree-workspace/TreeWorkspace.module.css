@@ -1,0 +1,508 @@
+.workspace {
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(12, 18, 22, 0.96), rgba(9, 11, 16, 1)),
+    var(--color-bg-primary);
+  color: var(--color-text-primary);
+  overflow: hidden;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+}
+
+.toolbar {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 14, 18, 0.92);
+}
+
+.brand {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.brandMark {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #d7f7e8;
+  background: linear-gradient(135deg, #177c68, #225f88);
+  font-weight: 800;
+}
+
+.brandText {
+  min-width: 0;
+}
+
+.brandTitle {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.brandMeta {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.searchForm {
+  position: relative;
+  display: flex;
+  min-width: min(560px, 42vw);
+}
+
+.searchInput {
+  width: 100%;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-primary);
+  padding: 0 42px 0 12px;
+  outline: none;
+}
+
+.searchButton {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  color: #d9f7ef;
+  background: rgba(35, 120, 96, 0.9);
+  cursor: pointer;
+}
+
+.searchResults {
+  position: absolute;
+  top: 44px;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  background: #111820;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
+  overflow: hidden;
+}
+
+.searchResult {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  display: block;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.searchResult:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.toolbarCluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.controlGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.smallInput {
+  width: 54px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--color-text-primary);
+  padding: 0 8px;
+}
+
+.toggle {
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 9px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.toggleActive {
+  background: rgba(75, 150, 126, 0.24);
+  color: #ddfff3;
+}
+
+.button,
+.iconButton,
+.dangerButton {
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-primary);
+  padding: 0 12px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.iconButton {
+  width: 34px;
+  padding: 0;
+}
+
+.button:hover,
+.iconButton:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.primaryButton {
+  background: #208066;
+  border-color: #2da987;
+}
+
+.dangerButton {
+  background: rgba(174, 55, 76, 0.18);
+  border-color: rgba(239, 100, 122, 0.5);
+  color: #ffcdd6;
+}
+
+.canvasPane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.canvasViewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: center;
+}
+
+.canvasViewport:active {
+  cursor: grabbing;
+}
+
+.canvasContent {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: 0 0;
+}
+
+.linkLayer {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.linkSpouse {
+  fill: none;
+  stroke: #b9a164;
+  stroke-width: 2.4;
+}
+
+.linkParent {
+  fill: none;
+  stroke: #79a6bc;
+  stroke-width: 2.2;
+}
+
+.linkSingle {
+  fill: none;
+  stroke: #8b98a5;
+  stroke-width: 2;
+  stroke-dasharray: 7 7;
+}
+
+.personCard {
+  position: absolute;
+  width: 224px;
+  height: 118px;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-left: 4px solid #81919d;
+  border-radius: 8px;
+  background: rgba(17, 24, 31, 0.96);
+  color: var(--color-text-primary);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.28);
+  padding: 12px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.personCard:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.personCardSelected {
+  outline: 2px solid #3dc49d;
+  outline-offset: 2px;
+}
+
+.personMale {
+  border-left-color: #4a98d8;
+}
+
+.personFemale {
+  border-left-color: #d86191;
+}
+
+.personOther {
+  border-left-color: #b6a45b;
+}
+
+.personName {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.personMeta {
+  margin-top: 7px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.personTags {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  min-width: 0;
+}
+
+.tag {
+  min-width: 0;
+  border-radius: 7px;
+  padding: 2px 7px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvasStatus {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: min(760px, calc(100% - 28px));
+}
+
+.statusPill {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: rgba(12, 17, 22, 0.84);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.zoomControls {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 8px;
+}
+
+.inspector {
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(12, 16, 21, 0.98);
+}
+
+.panel {
+  padding: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.panelTitle {
+  font-size: 14px;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+
+.fieldGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.label {
+  display: grid;
+  gap: 5px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.textarea,
+.select,
+.input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-primary);
+  padding: 9px 10px;
+  outline: none;
+}
+
+.textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.actionRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.drawerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  background: rgba(0, 0, 0, 0.46);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawer {
+  width: min(520px, 100%);
+  height: 100%;
+  overflow-y: auto;
+  background: #111820;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 18px;
+  box-shadow: -20px 0 45px rgba(0, 0, 0, 0.4);
+}
+
+.drawerHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.drawerTitle {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.candidate {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.candidateHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.muted {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.dialogOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 230;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.dialog {
+  width: min(520px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: #121a22;
+  padding: 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.emptyState {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+@media (max-width: 980px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(58vh, 1fr) auto;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .searchForm {
+    min-width: 0;
+  }
+
+  .canvasPane {
+    height: 58vh;
+  }
+
+  .inspector {
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+}

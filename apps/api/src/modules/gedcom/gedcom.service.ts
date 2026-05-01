@@ -59,6 +59,8 @@ export class GedcomService {
 
           const birthEvent = indi.getEventBirth();
           const deathEvent = indi.getEventDeath();
+          const birthDate = this.parseGedcomDate(birthEvent.getDate().value()?.[0]);
+          const deathDate = this.parseGedcomDate(deathEvent.getDate().value()?.[0]);
 
           const person = await tx.person.create({
             data: {
@@ -66,11 +68,18 @@ export class GedcomService {
               birthSurname: nameParts.surname || null,
               usageSurname: nameParts.surname || null,
               gender,
-              birthDate: this.parseGedcomDate(birthEvent.getDate().value()?.[0]),
+              birthDate,
               birthPlace: birthEvent.getPlace().value()?.[0] || null,
-              deathDate: this.parseGedcomDate(deathEvent.getDate().value()?.[0]),
+              deathDate,
               deathPlace: deathEvent.getPlace().value()?.[0] || null,
               notes: indi.getNote().value()?.[0] || null,
+              ...this.normalizedPersonFields({
+                givenNames: nameParts.givenNames || 'Unknown',
+                usageSurname: nameParts.surname || null,
+                birthSurname: nameParts.surname || null,
+                birthDate,
+                deathDate,
+              }),
             },
           });
 
@@ -448,6 +457,37 @@ export class GedcomService {
     } catch {
       return null;
     }
+  }
+
+  private normalizedPersonFields(input: {
+    givenNames?: string | null;
+    usageSurname?: string | null;
+    birthSurname?: string | null;
+    birthDate?: Date | null;
+    deathDate?: Date | null;
+  }) {
+    const surname = input.usageSurname || input.birthSurname || null;
+    return {
+      givenNamesNormalized: input.givenNames
+        ? this.normalizeText(input.givenNames) || null
+        : null,
+      surnameNormalized: surname ? this.normalizeText(surname) || null : null,
+      primaryNameNormalized:
+        this.normalizeText([input.givenNames, surname].filter(Boolean).join(' ')) ||
+        null,
+      birthYear: input.birthDate?.getFullYear() || null,
+      deathYear: input.deathDate?.getFullYear() || null,
+    };
+  }
+
+  private normalizeText(value: string) {
+    return value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   private formatGedcomDate(date: Date | string): string {

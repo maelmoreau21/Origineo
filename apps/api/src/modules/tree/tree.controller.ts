@@ -23,13 +23,20 @@ export class TreeController {
   })
   @ApiQuery({ name: 'ancestors', required: false, type: Number, description: 'Number of ancestor generations (default: 4)' })
   @ApiQuery({ name: 'descendants', required: false, type: Number, description: 'Number of descendant generations (default: 2)' })
+  @ApiQuery({ name: 'siblings', required: false, type: Boolean, description: 'Include root siblings and shared parents (default: true)' })
+  @ApiQuery({ name: 'spouses', required: false, type: Boolean, description: 'Include spouses and co-parents in the active window (default: true)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Maximum visible persons in this tree window (default: 1200, max: 5000)' })
   async getTree(
     @Param('rootPersonId', ParseUUIDPipe) rootPersonId: string,
     @Query('ancestors') ancestors?: string,
     @Query('descendants') descendants?: string,
+    @Query('siblings') siblings?: string,
+    @Query('spouses') spouses?: string,
+    @Query('limit') limit?: string,
   ) {
     const ancestorDepth = this.parseDepth(ancestors, 4, 12);
     const descendantDepth = this.parseDepth(descendants, 2, 12);
+    const parsedLimit = this.parseDepth(limit, 1200, 5000);
 
     return {
       success: true,
@@ -37,6 +44,11 @@ export class TreeController {
         rootPersonId,
         ancestorDepth,
         descendantDepth,
+        {
+          includeSiblings: this.parseBoolean(siblings, true),
+          includeSpouses: this.parseBoolean(spouses, true),
+          limit: Math.max(25, parsedLimit),
+        },
       ),
     };
   }
@@ -63,5 +75,12 @@ export class TreeController {
     if (integer < 0) return 0;
     if (integer > max) return max;
     return integer;
+  }
+
+  private parseBoolean(value: string | undefined, fallback: boolean) {
+    if (value === undefined) return fallback;
+    if (['true', '1', 'yes'].includes(value.toLowerCase())) return true;
+    if (['false', '0', 'no'].includes(value.toLowerCase())) return false;
+    return fallback;
   }
 }
