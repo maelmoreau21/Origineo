@@ -167,7 +167,6 @@ export default function TreeWorkspace() {
           rootPersonId={rootPersonId}
           selectedPersonId={selectedPersonId}
           onSelectPerson={setSelectedPersonId}
-          onRecenter={(personId) => loadTree(personId, personId)}
         />
 
         <PersonInspector

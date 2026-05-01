@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { layoutFamilyTree } from '@/lib/family-layout';
 import styles from './TreeWorkspace.module.css';
 import { formatLife, personLabel, TreeWindow } from './types';
@@ -10,7 +11,6 @@ type Props = {
   rootPersonId: string | null;
   selectedPersonId: string | null;
   onSelectPerson: (personId: string) => void;
-  onRecenter: (personId: string) => void;
 };
 
 export default function TreeCanvas({
@@ -18,8 +18,8 @@ export default function TreeCanvas({
   rootPersonId,
   selectedPersonId,
   onSelectPerson,
-  onRecenter,
 }: Props) {
+  const router = useRouter();
   const [view, setView] = useState({ x: -120, y: -80, scale: 0.88 });
   const dragRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(
     null,
@@ -61,6 +61,9 @@ export default function TreeCanvas({
           }));
         }}
         onPointerDown={(event) => {
+          const target = event.target as HTMLElement;
+          if (target.closest('[data-person-card="true"]')) return;
+
           (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
           dragRef.current = {
             x: event.clientX,
@@ -78,6 +81,9 @@ export default function TreeCanvas({
         onPointerUp={() => {
           dragRef.current = null;
         }}
+        onPointerCancel={() => {
+          dragRef.current = null;
+        }}
       >
         <div
           className={styles.canvasContent}
@@ -93,19 +99,21 @@ export default function TreeCanvas({
             height={contentHeight}
             viewBox={`0 0 ${contentWidth} ${contentHeight}`}
           >
-            {layout.links.map((link) => (
-              <path
-                key={link.id}
-                className={
-                  link.type === 'spouse'
-                    ? styles.linkSpouse
-                    : link.type === 'single-parent'
-                      ? styles.linkSingle
-                      : styles.linkParent
-                }
-                d={translatePath(link.path, offsetX, offsetY)}
-              />
-            ))}
+            <g transform={`translate(${offsetX} ${offsetY})`}>
+              {layout.links.map((link) => (
+                <path
+                  key={link.id}
+                  className={
+                    link.type === 'spouse'
+                      ? styles.linkSpouse
+                      : link.type === 'single-parent'
+                        ? styles.linkSingle
+                        : styles.linkParent
+                  }
+                  d={link.path}
+                />
+              ))}
+            </g>
           </svg>
 
           {layout.nodes.map((node) => {
@@ -113,7 +121,8 @@ export default function TreeCanvas({
             const selected = selectedPersonId === node.id;
             return (
               <button
-                key={node.id}
+                key={node.tid}
+                data-person-card="true"
                 className={[
                   styles.personCard,
                   selected ? styles.personCardSelected : '',
@@ -127,9 +136,17 @@ export default function TreeCanvas({
                   left: node.x + offsetX,
                   top: node.y + offsetY,
                 }}
-                onClick={() => onSelectPerson(node.id)}
-                onDoubleClick={() => onRecenter(node.id)}
-                title="Double clic pour recentrer"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectPerson(node.id);
+                }}
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  onSelectPerson(node.id);
+                  router.push(`/person/${node.id}`);
+                }}
+                title="Double clic pour ouvrir la fiche"
               >
                 <div className={styles.personName}>{personLabel(person)}</div>
                 <div className={styles.personMeta}>
@@ -203,10 +220,4 @@ export default function TreeCanvas({
       </div>
     </section>
   );
-}
-
-function translatePath(path: string, dx: number, dy: number) {
-  return path.replace(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g, (_, x, y) => {
-    return `${Number(x) + dx} ${Number(y) + dy}`;
-  });
 }

@@ -1,7 +1,7 @@
 # Origineo - Project Memory (Memoire IA)
 
 > Ce fichier sert de référence exhaustive pour l'IA lors de toute interaction future sur le projet Origineo.
-> Derniere mise a jour : 2026-05-01 (Phase 4 - Refonte million-scale workspace arbre + GEDCOM jobs)
+> Derniere mise a jour : 2026-05-01 (Phase 4 - Workspace arbre professionnel, liens multi-unions + GEDCOM jobs)
 > Source de verite : ce fichier uniquement. Ne pas creer de doublon racine `instructions.md`.
 
 ## ⚠️ Règle Cruciale : Commits & Git
@@ -281,7 +281,7 @@ Origineo/
 ### Documents
 | Méthode | Route | Auth | Description |
 |---|---|---|---|
-| POST | /api/documents/upload | ADMIN | Upload fichier (multipart, ?personId=&category=) |
+| POST | /api/documents/upload | ADMIN | Upload fichier (multipart, ?personId=&unionId=&category=) |
 | GET | /api/documents/person/:id | Public | Lister docs d'une personne |
 | GET | /api/documents/union/:id | Public | Lister docs d'un couple |
 | GET | /api/documents/:id | Public | Métadonnées d'un document |
@@ -301,8 +301,10 @@ Origineo/
 - **Prisma** : PrismaService global (singleton + driver adapter pg), raw SQL pour CTE/pg_trgm
 - **Fichiers** : Stockage local dans dossiers UUID. Limite upload : 20 MB
 - **GEDCOM Merge** : Les nouveaux workflows passent par `GedcomJob` persiste + staging pagine. Les routes historiques restent disponibles comme compatibilite.
-- **UX Prioritaire (Workspace arbre)** : Toutes les mutations principales doivent rester accessibles depuis l'ecran d'arbre : ajouter parent/enfant/conjoint, modifier fiche, importer/fusionner GEDCOM, rattacher un composant, supprimer personne/branche, exporter branche.
-- **Visualisation** : Le rendu principal n'utilise plus React Flow/Dagre. Utiliser `apps/web/src/lib/family-layout` (format `{ id, data, rels }` inspire `donatso/family-chart`) avec conjoints alignes et liens SVG propres.
+- **UX Prioritaire (Workspace arbre)** : Toutes les mutations principales doivent rester accessibles depuis l'ecran d'arbre : ajouter parent/enfant/conjoint, modifier fiche, importer/fusionner GEDCOM, rattacher un composant, supprimer personne/branche, exporter branche, gerer documents personne et documents union.
+- **Visualisation** : Le rendu principal n'utilise plus React Flow/Dagre. Utiliser `apps/web/src/lib/family-layout` (format `{ id, data, rels }` inspire `donatso/family-chart`) avec conjoints alignes, enfants groupes par union/coparent, bus parent-enfant par midpoint de couple et chemins SVG propres.
+- **Interaction arbre** : clic simple sur une carte = selection et mise a jour de `PersonInspector`; double-clic = ouverture de `/person/{id}`; recentrage via le bouton `Centrer` de l'inspecteur.
+- **Controle qualite genealogique** : l'inspecteur doit signaler les cas ambigus visibles (coparent sans union reelle, enfant avec plus de deux parents, parent unique dans la fenetre active).
 
 ---
 
@@ -391,7 +393,9 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 - **GEDCOM jobs** : `GedcomJob`, staging personnes/familles, candidats pagines, application batch, `.ged` et `.gedcom`.
 - **Simulation suppression branche** : `DELETE /api/persons/:id/branch?simulate=true` retourne personnes/relations/unions/documents avant confirmation.
 - **Workspace frontend** : `TreeWorkspace`, `TreeCanvas`, `TreeToolbar`, `PersonInspector`, `GedcomImportDrawer`, `MergeReviewDrawer`, `BranchDeleteDialog`.
-- **Layout visuel** : moteur SVG maison inspire de `donatso/family-chart` (MIT) : conjoints alignes, bus parent-enfant, chemins courbes, fenetre navigable.
+- **Layout visuel** : moteur SVG maison inspire de `donatso/family-chart` (MIT) : conjoints alignes, enfants groupes par union, bus parent-enfant depuis le midpoint du couple, coparents inferes si l'union manque, chemins courbes, fenetre navigable.
+- **Interaction workspace** : clic simple selectionne et rafraichit l'inspecteur; double-clic ouvre la fiche profil; le bouton `Centrer` garde le recentrage sur une personne.
+- **Documents dans le workspace** : `PersonInspector` expose documents individuels et documents de chaque union reelle avec upload, telechargement, visualisation et suppression selon role.
 
 ### Phase 5 (Prochaine)
 - Rattachement complet de composants depuis le workspace principal

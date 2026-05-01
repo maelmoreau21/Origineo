@@ -171,6 +171,10 @@
   padding: 0 12px;
   cursor: pointer;
   font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 .iconButton {
@@ -453,6 +457,163 @@
   font-size: 12px;
 }
 
+.warningList {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.warning {
+  border: 1px solid rgba(236, 174, 82, 0.36);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(236, 174, 82, 0.11);
+  color: #ffdba3;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.unionGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.unionCard {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.unionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.unionTitle {
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.personChipList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.personChip {
+  min-width: 0;
+  border: 1px solid rgba(124, 187, 170, 0.28);
+  border-radius: 7px;
+  padding: 5px 8px;
+  background: rgba(71, 154, 128, 0.13);
+  color: #dffcf3;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.compactDocumentPanel {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 10px;
+}
+
+.documentHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.documentControls {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.documentList {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.documentItem {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.documentThumb {
+  width: 54px;
+  height: 54px;
+  border-radius: 7px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.documentThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.documentMeta {
+  min-width: 0;
+}
+
+.documentName {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.documentActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.documentActions a,
+.documentActions button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #91d7c2;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.documentActions button {
+  color: #ffb3bf;
+}
+
 .dialogOverlay {
   position: fixed;
   inset: 0;
@@ -504,5 +665,9 @@
   .inspector {
     border-left: 0;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .documentControls {
+    grid-template-columns: 1fr;
   }
 }
