@@ -10,6 +10,16 @@ interface TreePerson {
   generation: number;
 }
 
+interface SosaPerson {
+  id: string;
+  gender: string;
+}
+
+interface SosaRelationship {
+  parentId: string;
+  childId: string;
+}
+
 type PlaceLike = {
   name: string;
   subdivision: string | null;
@@ -148,6 +158,16 @@ export class TreeService {
       },
     });
 
+    const sosaRootPersonId = await this.findSosaRootPersonId(treeId, {
+      id: rootPerson.id,
+      isRootDefault: rootPerson.isRootDefault,
+    });
+    const sosaNumbers = await this.getSosaNumbers(
+      treeId,
+      sosaRootPersonId,
+      Math.max(ancestorGenerations, descendantGenerations, 1),
+    );
+
     const unionsByPerson = new Map<string, (typeof unions)[number][]>();
     for (const union of unions) {
       const p1Unions = unionsByPerson.get(union.partner1Id) || [];
@@ -180,7 +200,7 @@ export class TreeService {
     // Build nodes
     const nodes = persons.map((person) => {
       return {
-        person: this.serializePerson(person),
+        person: this.serializePerson(person, sosaNumbers.get(person.id)),
         generation: generationMap.get(person.id) || 0,
         unions: unionsByPerson.get(person.id) || [],
         parents: parentsByChild.get(person.id) || [],
@@ -226,6 +246,126 @@ export class TreeService {
       result.push(id);
     }
     return result;
+  }
+
+  private async findSosaRootPersonId(
+    treeId: string,
+    currentRoot: { id: string; isRootDefault: boolean },
+  ) {
+    if (currentRoot.isRootDefault) return currentRoot.id;
+
+    const defaultRoot = await this.prisma.person.findFirst({
+      where: { treeId, isRootDefault: true },
+      select: { id: true },
+    });
+
+    return defaultRoot?.id ?? null;
+  }
+
+  private async getSosaNumbers(
+    treeId: string,
+    rootPersonId: string | null,
+    maxGenerations: number,
+  ) {
+    if (!rootPersonId) return new Map<string, number>();
+
+    const depth = Math.max(0, Math.min(32, Math.floor(maxGenerations)));
+    const ancestors = await this.getAncestors(treeId, rootPersonId, depth);
+    const personIds = Array.from(
+      new Set([rootPersonId, ...ancestors.map((ancestor) => ancestor.id)]),
+    );
+
+    const [persons, relationships] = await Promise.all([
+      this.prisma.person.findMany({
+        where: { treeId, id: { in: personIds } },
+        select: { id: true, gender: true },
+      }),
+      this.prisma.relationship.findMany({
+        where: {
+          AND: [
+            { parentId: { in: personIds } },
+            { childId: { in: personIds } },
+          ],
+        },
+        select: { parentId: true, childId: true },
+      }),
+    ]);
+
+    return this.calculateSosaNumbers(rootPersonId, persons, relationships);
+  }
+
+  private calculateSosaNumbers(
+    rootPersonId: string | null,
+    persons: SosaPerson[],
+    relationships: SosaRelationship[],
+  ) {
+    const sosaNumbers = new Map<string, number>();
+    if (!rootPersonId) return sosaNumbers;
+
+    const personById = new Map(persons.map((person) => [person.id, person]));
+    if (!personById.has(rootPersonId)) return sosaNumbers;
+
+    const parentsByChild = new Map<string, string[]>();
+    for (const relationship of relationships) {
+      const parents = parentsByChild.get(relationship.childId) || [];
+      parents.push(relationship.parentId);
+      parentsByChild.set(relationship.childId, parents);
+    }
+
+    sosaNumbers.set(rootPersonId, 1);
+
+    const queue = [rootPersonId];
+    for (let index = 0; index < queue.length; index += 1) {
+      const childId = queue[index];
+      const childSosaNumber = sosaNumbers.get(childId);
+      if (childSosaNumber === undefined) continue;
+
+      const parentIds = parentsByChild.get(childId) || [];
+      for (const parentId of parentIds) {
+        const parent = personById.get(parentId);
+        if (!parent) continue;
+
+        const parentSosaNumber = this.calculateParentSosaNumber(
+          childSosaNumber,
+          parent.gender,
+        );
+        if (parentSosaNumber === undefined) continue;
+
+        const existingSosaNumber = sosaNumbers.get(parentId);
+        if (
+          existingSosaNumber !== undefined &&
+          existingSosaNumber <= parentSosaNumber
+        ) {
+          continue;
+        }
+
+        sosaNumbers.set(parentId, parentSosaNumber);
+        queue.push(parentId);
+      }
+    }
+
+    return sosaNumbers;
+  }
+
+  private calculateParentSosaNumber(
+    childSosaNumber: number,
+    parentGender: string,
+  ) {
+    const parentSosaNumber =
+      parentGender === 'MALE'
+        ? childSosaNumber * 2
+        : parentGender === 'FEMALE'
+          ? childSosaNumber * 2 + 1
+          : undefined;
+
+    if (
+      parentSosaNumber === undefined ||
+      !Number.isSafeInteger(parentSosaNumber)
+    ) {
+      return undefined;
+    }
+
+    return parentSosaNumber;
   }
 
   /**
@@ -391,11 +531,13 @@ export class TreeService {
 
   private serializePerson<T extends { birthPlace?: PlaceLike; deathPlace?: PlaceLike }>(
     person: T,
+    sosaNumber?: number,
   ) {
     return {
       ...person,
       birthPlace: this.formatPlace(person.birthPlace || null),
       deathPlace: this.formatPlace(person.deathPlace || null),
+      ...(sosaNumber !== undefined ? { sosaNumber } : {}),
     };
   }
 

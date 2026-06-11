@@ -20,6 +20,7 @@ export default function TreeSettingsPage() {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<Tab>('login');
+  const [treeId] = useState<string | undefined>(() => getTreeIdFromUrl());
   const [sessionRestoring, setSessionRestoring] = useState(true);
   const isAdminUser = user?.role === 'ADMIN';
   const isRootUser = user?.isRoot === true;
@@ -139,7 +140,7 @@ export default function TreeSettingsPage() {
             <div style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-6)', borderBottom: '1px solid var(--color-border)', paddingBottom: 'var(--space-2)' }}>
               {(
                 [
-                { key: 'people', label: '👥 Données personnes' },
+                { key: 'people', label: 'Annuaire' },
                 { key: 'gedcom', label: '📂 GEDCOM' },
                 { key: 'maintenance', label: '🛠️ Intégrité & suppression' },
               ] as { key: Tab; label: string }[]
@@ -155,7 +156,7 @@ export default function TreeSettingsPage() {
               ))}
             </div>
 
-            {activeTab === 'people' && <PeoplePanel token={token} />}
+            {activeTab === 'people' && <PeoplePanel token={token} treeId={treeId} />}
             {activeTab === 'gedcom' && <GedcomSectionPanel token={token} />}
             {activeTab === 'maintenance' && <MaintenancePanel token={token} />}
           </>
@@ -171,6 +172,11 @@ function getInitialTabFromUrl(): Tab | null {
   return tab === 'people' || tab === 'gedcom' || tab === 'maintenance'
     ? tab
     : null;
+}
+
+function getTreeIdFromUrl() {
+  if (typeof window === 'undefined') return undefined;
+  return new URLSearchParams(window.location.search).get('treeId')?.trim() || undefined;
 }
 
 // ─── Login Form ─────────────────────────────
@@ -263,18 +269,18 @@ function AccountsPagePanel({ token, isRootUser }: { token: string; isRootUser: b
   return <AccountsPanel token={token} mode="accounts" />;
 }
 
-function PeoplePanel({ token }: { token: string }) {
+function PeoplePanel({ token, treeId }: { token: string; treeId?: string }) {
   return (
     <div style={{ display: 'grid', gap: 'var(--space-6)' }}>
       <div className="glass-card">
-        <h3 style={{ marginBottom: 'var(--space-2)' }}>👥 Gestion des personnes</h3>
+        <h3 style={{ marginBottom: 'var(--space-2)' }}>Annuaire</h3>
         <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
-          Ajout, consultation et suppression des personnes ou branches.
+          Annuaire des personnes rattachees a l&apos;arbre courant.
         </p>
       </div>
 
-      <PersonsList token={token} />
-      <AddPersonForm token={token} />
+      <PersonsList token={token} treeId={treeId} />
+      <AddPersonForm token={token} treeId={treeId} />
     </div>
   );
 }
@@ -1146,7 +1152,7 @@ function TreeRepairPanel({ token }: { token: string }) {
 }
 
 // ─── Persons List ───────────────────────────
-function PersonsList({ token }: { token: string }) {
+function PersonsList({ token, treeId }: { token: string; treeId?: string }) {
   const [persons, setPersons] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1162,7 +1168,7 @@ function PersonsList({ token }: { token: string }) {
     setError(null);
 
     try {
-      const result = await personApi.getAll(page, limit);
+      const result = await personApi.getAll(page, limit, treeId);
       const payload = result.data || {};
       const rows = payload.data || [];
 
@@ -1177,7 +1183,7 @@ function PersonsList({ token }: { token: string }) {
     } finally {
       setLoading(false);
     }
-  }, [page, limit]);
+  }, [page, limit, treeId]);
 
   useEffect(() => {
     loadPersons();
@@ -1206,7 +1212,7 @@ function PersonsList({ token }: { token: string }) {
 
     setBusyPersonId(person.id);
     try {
-      await personApi.delete(person.id, token);
+      await personApi.delete(person.id, token, treeId);
       refresh();
     } catch (err: any) {
       alert(err.message || 'Suppression impossible.');
@@ -1223,7 +1229,7 @@ function PersonsList({ token }: { token: string }) {
 
     setBusyPersonId(person.id);
     try {
-      await personApi.deleteBranch(person.id, token, true);
+      await personApi.deleteBranch(person.id, token, true, false, treeId);
       refresh();
     } catch (err: any) {
       alert(err.message || 'Suppression de branche impossible.');
@@ -1338,7 +1344,7 @@ function PersonsList({ token }: { token: string }) {
 }
 
 // ─── Add Person Form ────────────────────────
-function AddPersonForm({ token }: { token: string }) {
+function AddPersonForm({ token, treeId }: { token: string; treeId?: string }) {
   const [formData, setFormData] = useState({
     givenNames: '', usageSurname: '', birthSurname: '', gender: 'UNKNOWN',
     birthDate: '', birthPlace: '', deathDate: '', deathPlace: '',
@@ -1366,7 +1372,7 @@ function AddPersonForm({ token }: { token: string }) {
         notes: formData.notes || undefined,
       };
 
-      await personApi.create(data, token);
+      await personApi.create(data, token, treeId);
       setSuccess(`${formData.givenNames} ajouté(e) avec succès !`);
       setFormData({
         givenNames: '', usageSurname: '', birthSurname: '', gender: 'UNKNOWN',

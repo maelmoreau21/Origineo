@@ -11,11 +11,24 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { TreeService } from './tree.service';
+import { TreeIntegrityService } from '../person/tree-integrity.service';
 
 @ApiTags('Tree')
 @Controller('tree')
 export class TreeController {
-  constructor(private readonly treeService: TreeService) {}
+  constructor(
+    private readonly treeService: TreeService,
+    private readonly treeIntegrityService: TreeIntegrityService,
+  ) {}
+
+  @Get(':id/anomalies')
+  @ApiOperation({ summary: 'Detect tree integrity anomalies' })
+  async getAnomalies(@Param('id', ParseUUIDPipe) id: string) {
+    return {
+      success: true,
+      data: await this.treeIntegrityService.findAnomalies(id),
+    };
+  }
 
   @Get(':rootPersonId')
   @ApiOperation({

@@ -5,6 +5,7 @@ import styles from './TreeWorkspace.module.css';
 import { personLabel, TreeWindow } from './types';
 
 type Props = {
+  treeId: string;
   tree: TreeWindow | null;
   searchQuery: string;
   searchResults: any[];
@@ -24,6 +25,7 @@ type Props = {
 };
 
 export default function TreeToolbar({
+  treeId,
   tree,
   searchQuery,
   searchResults,
@@ -42,6 +44,7 @@ export default function TreeToolbar({
   onRefresh,
 }: Props) {
   const stats = tree?.stats;
+  const encodedTreeId = encodeURIComponent(treeId);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -103,7 +106,10 @@ export default function TreeToolbar({
       </form>
 
       <div className={styles.toolbarCluster}>
-        <a className={styles.button} href="/tree-settings?tab=gedcom">
+        <a className={styles.button} href={`/tree-settings?tab=people&treeId=${encodedTreeId}`}>
+          Annuaire
+        </a>
+        <a className={styles.button} href={`/tree-settings?tab=gedcom&treeId=${encodedTreeId}`}>
           Gestion
         </a>
         <details className={styles.viewMenu}>

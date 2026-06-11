@@ -10,14 +10,17 @@ import {
 } from 'react';
 import {
   documentApi,
+  eventApi,
   personApi,
   relationshipApi,
+  sourceApi,
   unionApi,
 } from '@/lib/api';
 import styles from './TreeWorkspace.module.css';
 import { formatLife, Person, personLabel, TreeWindow } from './types';
 
 type ActionMode = 'parent' | 'child' | 'spouse';
+type InspectorTab = 'timeline' | 'sources';
 
 type Props = {
   tree: TreeWindow | null;
@@ -42,6 +45,66 @@ type UnionGroup = {
   warnings: string[];
   inferred: boolean;
 };
+
+type PersonEvent = {
+  id: string;
+  type: string;
+  date?: string | null;
+  dateRaw?: string | null;
+  notes?: string | null;
+  place?: {
+    id: string;
+    name: string;
+    subdivision?: string | null;
+    region?: string | null;
+    country?: string | null;
+  } | null;
+  participants?: Array<{
+    personId?: string;
+    role?: string | null;
+    person?: Person;
+  }>;
+};
+
+type CitationLink = {
+  id: string;
+  createdAt?: string;
+  citation?: Citation;
+};
+
+type Citation = {
+  id: string;
+  page?: string | null;
+  transcription?: string | null;
+  confidenceScore?: number | null;
+  source?: {
+    id: string;
+    title: string;
+    text?: string | null;
+    repository?: {
+      id: string;
+      name: string;
+      type?: string | null;
+      url?: string | null;
+    } | null;
+  } | null;
+};
+
+const EVENT_TYPE_OPTIONS = [
+  { value: 'BIRTH', label: 'Naissance' },
+  { value: 'BAPTISM', label: 'Bapteme' },
+  { value: 'RESIDENCE', label: 'Residence' },
+  { value: 'CENSUS', label: 'Recensement' },
+  { value: 'MARRIAGE', label: 'Mariage' },
+  { value: 'MILITARY_SERVICE', label: 'Service militaire' },
+  { value: 'DEATH', label: 'Deces' },
+  { value: 'BURIAL', label: 'Inhumation' },
+  { value: 'OTHER', label: 'Autre' },
+];
+
+const EVENT_TYPE_LABELS = Object.fromEntries(
+  EVENT_TYPE_OPTIONS.map((option) => [option.value, option.label]),
+);
 
 const CATEGORY_OPTIONS = [
   { value: 'PHOTO', label: 'Photo' },
@@ -235,6 +298,8 @@ export default function PersonInspector({
       />
 
       <UnionChildrenPanel groups={unionGroups} token={token} />
+
+      <PersonFactsTabs person={selected} token={token} onSaved={onSaved} />
 
       <section className={styles.panel}>
         <EntityDocumentsPanel
@@ -537,6 +602,567 @@ function UnionChildrenPanel({
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+function PersonFactsTabs({
+  person,
+  token,
+  onSaved,
+}: {
+  person: Person;
+  token: string | null;
+  onSaved: (personId?: string) => void;
+}) {
+  const [activeTab, setActiveTab] = useState<InspectorTab>('timeline');
+  const [events, setEvents] = useState<PersonEvent[]>([]);
+  const [citationLinks, setCitationLinks] = useState<CitationLink[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [loadingCitations, setLoadingCitations] = useState(true);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [eventForm, setEventForm] = useState({
+    type: 'RESIDENCE',
+    date: '',
+    dateRaw: '',
+    role: 'SUBJECT',
+    notes: '',
+  });
+  const [eventLinkForm, setEventLinkForm] = useState({
+    eventId: '',
+    role: 'SUBJECT',
+  });
+  const [citationForm, setCitationForm] = useState({
+    sourceId: '',
+    page: '',
+    transcription: '',
+    confidenceScore: '',
+  });
+  const [citationLinkForm, setCitationLinkForm] = useState({ citationId: '' });
+  const [savingEvent, setSavingEvent] = useState(false);
+  const [linkingEvent, setLinkingEvent] = useState(false);
+  const [savingCitation, setSavingCitation] = useState(false);
+  const [linkingCitation, setLinkingCitation] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setNotice(null);
+    setLoadingEvents(true);
+
+    eventApi
+      .getByPerson(person.id, 1, 80)
+      .then((result) => {
+        if (!alive) return;
+        setEvents(readApiList<PersonEvent>(result));
+      })
+      .catch(() => {
+        if (!alive) return;
+        setEvents([]);
+      })
+      .finally(() => {
+        if (alive) setLoadingEvents(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [person.id]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoadingCitations(true);
+
+    sourceApi
+      .getCitationsByPerson(person.id)
+      .then((result) => {
+        if (!alive) return;
+        setCitationLinks(readApiList<CitationLink>(result));
+      })
+      .catch(() => {
+        if (!alive) return;
+        setCitationLinks([]);
+      })
+      .finally(() => {
+        if (alive) setLoadingCitations(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [person.id]);
+
+  async function refreshEvents() {
+    const result = await eventApi.getByPerson(person.id, 1, 80);
+    setEvents(readApiList<PersonEvent>(result));
+  }
+
+  async function refreshCitations() {
+    const result = await sourceApi.getCitationsByPerson(person.id);
+    setCitationLinks(readApiList<CitationLink>(result));
+  }
+
+  async function createTimelineEvent(event: FormEvent) {
+    event.preventDefault();
+    if (!token) return;
+
+    const type = eventForm.type.trim();
+    const role = eventForm.role.trim() || 'SUBJECT';
+    const dateRaw = eventForm.dateRaw.trim();
+    const notes = eventForm.notes.trim();
+
+    if (!type) {
+      setNotice("Le type d'evenement est obligatoire.");
+      return;
+    }
+
+    if (!eventForm.date && !dateRaw) {
+      setNotice('Ajoutez une date exacte ou une date libre.');
+      return;
+    }
+
+    setSavingEvent(true);
+    setNotice(null);
+    try {
+      await eventApi.create(
+        {
+          type,
+          date: eventForm.date || null,
+          dateRaw: dateRaw || null,
+          notes: notes || null,
+          participants: [{ personId: person.id, role }],
+        },
+        token,
+      );
+      setEventForm({
+        type: eventForm.type,
+        date: '',
+        dateRaw: '',
+        role,
+        notes: '',
+      });
+      await refreshEvents();
+      onSaved(person.id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Creation de l'evenement impossible.");
+    } finally {
+      setSavingEvent(false);
+    }
+  }
+
+  async function linkExistingEvent(event: FormEvent) {
+    event.preventDefault();
+    if (!token) return;
+
+    const eventId = eventLinkForm.eventId.trim();
+    if (!eventId) {
+      setNotice("Indiquez l'identifiant de l'evenement a lier.");
+      return;
+    }
+
+    setLinkingEvent(true);
+    setNotice(null);
+    try {
+      await eventApi.attachParticipant(
+        eventId,
+        { personId: person.id, role: eventLinkForm.role.trim() || 'SUBJECT' },
+        token,
+      );
+      setEventLinkForm({ ...eventLinkForm, eventId: '' });
+      await refreshEvents();
+      onSaved(person.id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Lien d'evenement impossible.");
+    } finally {
+      setLinkingEvent(false);
+    }
+  }
+
+  async function createCitationAndLink(event: FormEvent) {
+    event.preventDefault();
+    if (!token) return;
+
+    const sourceId = citationForm.sourceId.trim();
+    const confidenceScore = citationForm.confidenceScore.trim()
+      ? Number(citationForm.confidenceScore)
+      : undefined;
+
+    if (!sourceId) {
+      setNotice("Indiquez l'identifiant de la source.");
+      return;
+    }
+
+    if (
+      confidenceScore !== undefined &&
+      (!Number.isFinite(confidenceScore) || confidenceScore < 0 || confidenceScore > 100)
+    ) {
+      setNotice('La confiance doit etre comprise entre 0 et 100.');
+      return;
+    }
+
+    setSavingCitation(true);
+    setNotice(null);
+    try {
+      const createdEnvelope = await sourceApi.createCitation(
+        {
+          sourceId,
+          page: citationForm.page.trim() || undefined,
+          transcription: citationForm.transcription.trim() || undefined,
+          ...(confidenceScore !== undefined ? { confidenceScore } : {}),
+        },
+        token,
+      );
+      const created = createdEnvelope.data || createdEnvelope;
+
+      if (!created.id) {
+        throw new Error('Citation creee sans identifiant.');
+      }
+
+      await sourceApi.linkCitation({ citationId: created.id, personId: person.id }, token);
+      setCitationForm({
+        sourceId,
+        page: '',
+        transcription: '',
+        confidenceScore: '',
+      });
+      await refreshCitations();
+      onSaved(person.id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Creation de citation impossible.');
+    } finally {
+      setSavingCitation(false);
+    }
+  }
+
+  async function linkExistingCitation(event: FormEvent) {
+    event.preventDefault();
+    if (!token) return;
+
+    const citationId = citationLinkForm.citationId.trim();
+    if (!citationId) {
+      setNotice("Indiquez l'identifiant de la citation.");
+      return;
+    }
+
+    setLinkingCitation(true);
+    setNotice(null);
+    try {
+      await sourceApi.linkCitation({ citationId, personId: person.id }, token);
+      setCitationLinkForm({ citationId: '' });
+      await refreshCitations();
+      onSaved(person.id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Lien de citation impossible.');
+    } finally {
+      setLinkingCitation(false);
+    }
+  }
+
+  return (
+    <section className={styles.panel}>
+      <div className={styles.tabsRoot}>
+        <div className={styles.tabList} role="tablist" aria-label="Faits">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'timeline'}
+            className={`${styles.tabTrigger} ${activeTab === 'timeline' ? styles.tabTriggerActive : ''}`}
+            onClick={() => setActiveTab('timeline')}
+          >
+            Chronologie ({events.length})
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'sources'}
+            className={`${styles.tabTrigger} ${activeTab === 'sources' ? styles.tabTriggerActive : ''}`}
+            onClick={() => setActiveTab('sources')}
+          >
+            Sources ({citationLinks.length})
+          </button>
+        </div>
+
+        {notice ? <div className={styles.formNotice}>{notice}</div> : null}
+
+        {activeTab === 'timeline' ? (
+          <div className={styles.tabPanel} role="tabpanel">
+            {token ? (
+              <div className={styles.quickForms}>
+                <form className={styles.compactForm} onSubmit={createTimelineEvent}>
+                  <div className={styles.formTitle}>Nouvel evenement</div>
+                  <label className={styles.label}>
+                    Type
+                    <input
+                      className={styles.input}
+                      list="person-event-type-options"
+                      value={eventForm.type}
+                      onChange={(event) =>
+                        setEventForm({ ...eventForm, type: event.target.value })
+                      }
+                    />
+                    <datalist id="person-event-type-options">
+                      {EVENT_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </datalist>
+                  </label>
+                  <div className={styles.twoColumnFields}>
+                    <label className={styles.label}>
+                      Date
+                      <input
+                        className={styles.input}
+                        type="date"
+                        value={eventForm.date}
+                        onChange={(event) =>
+                          setEventForm({ ...eventForm, date: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className={styles.label}>
+                      Date libre
+                      <input
+                        className={styles.input}
+                        value={eventForm.dateRaw}
+                        onChange={(event) =>
+                          setEventForm({ ...eventForm, dateRaw: event.target.value })
+                        }
+                        placeholder="vers 1830"
+                      />
+                    </label>
+                  </div>
+                  <label className={styles.label}>
+                    Role
+                    <input
+                      className={styles.input}
+                      value={eventForm.role}
+                      onChange={(event) =>
+                        setEventForm({ ...eventForm, role: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className={styles.label}>
+                    Notes
+                    <textarea
+                      className={styles.textarea}
+                      value={eventForm.notes}
+                      onChange={(event) =>
+                        setEventForm({ ...eventForm, notes: event.target.value })
+                      }
+                    />
+                  </label>
+                  <button
+                    className={`${styles.button} ${styles.primaryButton}`}
+                    disabled={savingEvent}
+                  >
+                    {savingEvent ? 'Creation...' : 'Creer et lier'}
+                  </button>
+                </form>
+
+                <form className={styles.compactForm} onSubmit={linkExistingEvent}>
+                  <div className={styles.formTitle}>Lier un evenement</div>
+                  <label className={styles.label}>
+                    Event ID
+                    <input
+                      className={styles.input}
+                      value={eventLinkForm.eventId}
+                      onChange={(event) =>
+                        setEventLinkForm({ ...eventLinkForm, eventId: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className={styles.label}>
+                    Role
+                    <input
+                      className={styles.input}
+                      value={eventLinkForm.role}
+                      onChange={(event) =>
+                        setEventLinkForm({ ...eventLinkForm, role: event.target.value })
+                      }
+                    />
+                  </label>
+                  <button className={styles.button} disabled={linkingEvent}>
+                    {linkingEvent ? 'Lien...' : 'Lier'}
+                  </button>
+                </form>
+              </div>
+            ) : (
+              <div className={styles.muted}>
+                Connectez-vous pour creer ou lier un evenement.
+              </div>
+            )}
+
+            {loadingEvents ? (
+              <div className={styles.muted}>Chargement de la chronologie...</div>
+            ) : events.length === 0 ? (
+              <div className={styles.emptyInline}>Aucun evenement lie a cette personne.</div>
+            ) : (
+              <div className={styles.timelineList}>
+                {events.map((personEvent) => (
+                  <article key={personEvent.id} className={styles.timelineItem}>
+                    <div className={styles.timelineMarker} aria-hidden="true" />
+                    <div className={styles.timelineContent}>
+                      <div className={styles.timelineHeader}>
+                        <div>
+                          <div className={styles.timelineTitle}>
+                            {eventTypeLabel(personEvent.type)}
+                          </div>
+                          <div className={styles.timelineDate}>
+                            {formatDateValue(personEvent.date) ||
+                              personEvent.dateRaw ||
+                              'Date inconnue'}
+                          </div>
+                        </div>
+                        <span className={styles.tag}>
+                          {participantRoleFor(personEvent, person.id)}
+                        </span>
+                      </div>
+                      {personEvent.place ? (
+                        <div className={styles.timelinePlace}>
+                          {formatPlace(personEvent.place)}
+                        </div>
+                      ) : null}
+                      {personEvent.notes ? (
+                        <div className={styles.timelineNotes}>{personEvent.notes}</div>
+                      ) : null}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className={styles.tabPanel} role="tabpanel">
+            {token ? (
+              <div className={styles.quickForms}>
+                <form className={styles.compactForm} onSubmit={createCitationAndLink}>
+                  <div className={styles.formTitle}>Nouvelle citation</div>
+                  <label className={styles.label}>
+                    Source ID
+                    <input
+                      className={styles.input}
+                      value={citationForm.sourceId}
+                      onChange={(event) =>
+                        setCitationForm({ ...citationForm, sourceId: event.target.value })
+                      }
+                    />
+                  </label>
+                  <div className={styles.twoColumnFields}>
+                    <label className={styles.label}>
+                      Page/vue
+                      <input
+                        className={styles.input}
+                        value={citationForm.page}
+                        onChange={(event) =>
+                          setCitationForm({ ...citationForm, page: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className={styles.label}>
+                      Confiance
+                      <input
+                        className={styles.input}
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={citationForm.confidenceScore}
+                        onChange={(event) =>
+                          setCitationForm({
+                            ...citationForm,
+                            confidenceScore: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <label className={styles.label}>
+                    Transcription
+                    <textarea
+                      className={styles.textarea}
+                      value={citationForm.transcription}
+                      onChange={(event) =>
+                        setCitationForm({
+                          ...citationForm,
+                          transcription: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <button
+                    className={`${styles.button} ${styles.primaryButton}`}
+                    disabled={savingCitation}
+                  >
+                    {savingCitation ? 'Creation...' : 'Creer et lier'}
+                  </button>
+                </form>
+
+                <form className={styles.compactForm} onSubmit={linkExistingCitation}>
+                  <div className={styles.formTitle}>Lier une citation</div>
+                  <label className={styles.label}>
+                    Citation ID
+                    <input
+                      className={styles.input}
+                      value={citationLinkForm.citationId}
+                      onChange={(event) =>
+                        setCitationLinkForm({ citationId: event.target.value })
+                      }
+                    />
+                  </label>
+                  <button className={styles.button} disabled={linkingCitation}>
+                    {linkingCitation ? 'Lien...' : 'Lier'}
+                  </button>
+                </form>
+              </div>
+            ) : (
+              <div className={styles.muted}>
+                Connectez-vous pour creer ou lier une citation.
+              </div>
+            )}
+
+            {loadingCitations ? (
+              <div className={styles.muted}>Chargement des sources...</div>
+            ) : citationLinks.length === 0 ? (
+              <div className={styles.emptyInline}>Aucune citation liee a cette personne.</div>
+            ) : (
+              <div className={styles.citationList}>
+                {citationLinks.map((link) => {
+                  const citation = citationFromLink(link);
+                  return (
+                    <article key={link.id} className={styles.citationItem}>
+                      <div className={styles.citationHeader}>
+                        <div>
+                          <div className={styles.citationTitle}>
+                            {citation?.source?.title || 'Source sans titre'}
+                          </div>
+                          <div className={styles.muted}>
+                            {[
+                              citation?.source?.repository?.name,
+                              citation?.page ? `page ${citation.page}` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' - ') || 'Reference sans detail'}
+                          </div>
+                        </div>
+                        {citation?.confidenceScore !== undefined &&
+                        citation?.confidenceScore !== null ? (
+                          <span className={styles.tag}>
+                            {citation.confidenceScore}/100
+                          </span>
+                        ) : null}
+                      </div>
+                      {citation?.transcription ? (
+                        <div className={styles.citationQuote}>
+                          {citation.transcription}
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -854,6 +1480,38 @@ function formatUnionLine(union: any) {
 function unionTypeLabel(type?: string | null) {
   if (!type) return 'Union';
   return UNION_TYPE_LABELS[type] || type;
+}
+
+function eventTypeLabel(type?: string | null) {
+  if (!type) return 'Evenement';
+  return EVENT_TYPE_LABELS[type] || type.replace(/_/g, ' ');
+}
+
+function participantRoleFor(personEvent: PersonEvent, personId: string) {
+  const participant = personEvent.participants?.find(
+    (item) => item.personId === personId || item.person?.id === personId,
+  );
+
+  return participant?.role || 'SUBJECT';
+}
+
+function citationFromLink(link: CitationLink | Citation): Citation | undefined {
+  if ('citation' in link) return link.citation;
+  return link;
+}
+
+function formatPlace(place?: PersonEvent['place']) {
+  if (!place) return '';
+  return [place.name, place.subdivision, place.region, place.country]
+    .filter(Boolean)
+    .join(', ');
+}
+
+function readApiList<T>(result: any): T[] {
+  const payload = result?.data ?? result;
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
 }
 
 function formatDateValue(value?: string | null) {

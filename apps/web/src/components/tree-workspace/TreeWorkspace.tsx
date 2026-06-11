@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  DEFAULT_TREE_ID,
   personApi,
   searchApi,
   treeApi,
@@ -14,6 +15,7 @@ import styles from './TreeWorkspace.module.css';
 import { Person, TreeWindow } from './types';
 
 export default function TreeWorkspace() {
+  const treeId = DEFAULT_TREE_ID;
   const [token, setToken] = useState<string | null>(null);
   const [rootPersonId, setRootPersonId] = useState<string | null>(null);
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
@@ -40,7 +42,7 @@ export default function TreeWorkspace() {
       setLoading(true);
       setError(null);
       try {
-        const nextRootId = await resolveRootPersonId(storedToken);
+        const nextRootId = await resolveRootPersonId(storedToken, treeId);
         if (!alive) return;
         if (nextRootId) {
           setRootPersonId(nextRootId);
@@ -76,7 +78,7 @@ export default function TreeWorkspace() {
           siblings: includeSiblings,
           spouses: includeSpouses,
           limit: 1200,
-        });
+        }, treeId);
         const payload = envelope.data || envelope;
         setTree(payload);
         setRootPersonId(payload.rootPersonId || nextRootId);
@@ -87,7 +89,7 @@ export default function TreeWorkspace() {
         setLoading(false);
       }
     },
-    [ancestors, descendants, includeSiblings, includeSpouses, rootPersonId],
+    [ancestors, descendants, includeSiblings, includeSpouses, rootPersonId, treeId],
   );
 
   useEffect(() => {
@@ -107,7 +109,7 @@ export default function TreeWorkspace() {
     }
     setSearching(true);
     try {
-      const envelope = await searchApi.search(searchQuery, 1, 8);
+      const envelope = await searchApi.search(searchQuery, 1, 8, treeId);
       const payload = envelope.data || envelope;
       setSearchResults(payload.persons || []);
     } finally {
@@ -127,7 +129,7 @@ export default function TreeWorkspace() {
     const currentSelectionDeleted = Boolean(deletedId && deletedId === selectedPersonId);
 
     if (currentRootDeleted) {
-      const nextRootId = await resolveRootPersonId(token);
+      const nextRootId = await resolveRootPersonId(token, treeId);
       if (nextRootId) {
         await loadTree(nextRootId, nextRootId);
       } else {
@@ -148,6 +150,7 @@ export default function TreeWorkspace() {
     <div className={styles.workspace}>
       <div className={styles.shell}>
         <TreeToolbar
+          treeId={treeId}
           tree={tree}
           searchQuery={searchQuery}
           searchResults={searchResults}
@@ -215,22 +218,22 @@ export default function TreeWorkspace() {
   );
 }
 
-async function resolveRootPersonId(token: string | null) {
-  const rootEnvelope = await personApi.getRoot().catch(() => null);
+async function resolveRootPersonId(token: string | null, treeId = DEFAULT_TREE_ID) {
+  const rootEnvelope = await personApi.getRoot(treeId).catch(() => null);
   const root = rootEnvelope?.data || rootEnvelope;
   if (root?.id) return root.id;
 
   if (token) {
-    const repairEnvelope = await personApi.repairRootDefault(token).catch(() => null);
+    const repairEnvelope = await personApi.repairRootDefault(token, treeId).catch(() => null);
     const repair = repairEnvelope?.data || repairEnvelope;
     if (repair?.personId) return repair.personId;
 
-    const repairedRootEnvelope = await personApi.getRoot().catch(() => null);
+    const repairedRootEnvelope = await personApi.getRoot(treeId).catch(() => null);
     const repairedRoot = repairedRootEnvelope?.data || repairedRootEnvelope;
     if (repairedRoot?.id) return repairedRoot.id;
   }
 
-  const listEnvelope = await personApi.getAll(1, 1).catch(() => null);
+  const listEnvelope = await personApi.getAll(1, 1, treeId).catch(() => null);
   const payload = listEnvelope?.data || listEnvelope;
   const firstPerson = payload?.data?.[0] || payload?.persons?.[0] || payload?.[0];
   return firstPerson?.id || null;

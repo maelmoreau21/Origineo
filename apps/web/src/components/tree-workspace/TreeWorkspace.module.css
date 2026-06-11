@@ -699,6 +699,176 @@
   overflow-wrap: anywhere;
 }
 
+.tabsRoot {
+  display: grid;
+  gap: 12px;
+}
+
+.tabList {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.tabTrigger {
+  height: 34px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tabTriggerActive {
+  background: #193d35;
+  color: #ddfff3;
+}
+
+.tabPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.formNotice {
+  border: 1px solid rgba(236, 174, 82, 0.34);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(236, 174, 82, 0.1);
+  color: #ffdba3;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.quickForms {
+  display: grid;
+  gap: 10px;
+}
+
+.compactForm {
+  display: grid;
+  gap: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.formTitle {
+  color: #e7edf2;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.twoColumnFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.emptyInline {
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.timelineList {
+  display: grid;
+  gap: 10px;
+}
+
+.timelineItem {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  position: relative;
+}
+
+.timelineItem::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 20px;
+  bottom: -10px;
+  width: 1px;
+  background: rgba(124, 187, 170, 0.25);
+}
+
+.timelineItem:last-child::before {
+  display: none;
+}
+
+.timelineMarker {
+  width: 9px;
+  height: 9px;
+  margin-top: 12px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: #58b99b;
+  box-shadow: 0 0 0 4px rgba(88, 185, 155, 0.12);
+}
+
+.timelineContent,
+.citationItem {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.timelineHeader,
+.citationHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.timelineTitle,
+.citationTitle {
+  color: #f0f4f7;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.timelineDate,
+.timelinePlace {
+  margin-top: 3px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.timelinePlace {
+  color: #bdebdc;
+}
+
+.timelineNotes,
+.citationQuote {
+  margin-top: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.citationList {
+  display: grid;
+  gap: 8px;
+}
+
 .compactDocumentPanel {
   display: grid;
   gap: 8px;
@@ -867,6 +1037,10 @@
   }
 
   .documentControls {
+    grid-template-columns: 1fr;
+  }
+
+  .twoColumnFields {
     grid-template-columns: 1fr;
   }
 }

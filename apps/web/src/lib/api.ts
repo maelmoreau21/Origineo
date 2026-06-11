@@ -3,7 +3,7 @@
 // ══════════════════════════════════════
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-const DEFAULT_TREE_ID =
+export const DEFAULT_TREE_ID =
   process.env.NEXT_PUBLIC_TREE_ID || '00000000-0000-0000-0000-000000000001';
 
 interface FetchOptions extends RequestInit {
@@ -290,6 +290,56 @@ export const unionApi = {
   delete: (id: string, token: string, treeId = DEFAULT_TREE_ID) =>
     apiFetch<any>(appendTreeId(`/unions/${id}`, treeId), {
       method: 'DELETE',
+      token,
+    }),
+};
+
+// ─── Event API ───────────────────────────────
+export const eventApi = {
+  getByPerson: (personId: string, page = 1, limit = 80, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(
+      `/events/person/${personId}?page=${page}&limit=${limit}&treeId=${encodeURIComponent(treeId)}`,
+    ),
+
+  create: (data: any, token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>('/events', {
+      method: 'POST',
+      body: JSON.stringify({ ...data, treeId: data.treeId || treeId }),
+      token,
+    }),
+
+  attachParticipant: (
+    eventId: string,
+    data: { personId: string; role: string },
+    token: string,
+    treeId = DEFAULT_TREE_ID,
+  ) =>
+    apiFetch<any>(appendTreeId(`/events/${eventId}/participants`, treeId), {
+      method: 'POST',
+      body: JSON.stringify(data),
+      token,
+    }),
+};
+
+export const sourceApi = {
+  getCitationsByPerson: (personId: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/sources/persons/${personId}/citations`, treeId)),
+
+  createCitation: (data: any, token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>('/sources/citations', {
+      method: 'POST',
+      body: JSON.stringify({ ...data, treeId: data.treeId || treeId }),
+      token,
+    }),
+
+  linkCitation: (
+    data: { citationId: string; personId?: string; unionId?: string },
+    token: string,
+    treeId = DEFAULT_TREE_ID,
+  ) =>
+    apiFetch<any>('/sources/citation-links', {
+      method: 'POST',
+      body: JSON.stringify({ ...data, treeId }),
       token,
     }),
 };
