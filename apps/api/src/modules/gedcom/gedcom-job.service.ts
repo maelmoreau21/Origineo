@@ -14,6 +14,12 @@ import {
 import { PersonService } from '../person/person.service';
 
 type GedcomJobModeInput = 'import' | 'merge' | 'IMPORT' | 'MERGE';
+type PlaceLike = {
+  name: string;
+  subdivision: string | null;
+  region: string | null;
+  country: string | null;
+} | null;
 
 @Injectable()
 export class GedcomJobService {
@@ -27,11 +33,12 @@ export class GedcomJobService {
     private readonly personService: PersonService,
   ) {}
 
-  async createJob(fileBuffer: Buffer, filename: string, mode: GedcomJobModeInput) {
+  async createJob(treeId: string, fileBuffer: Buffer, filename: string, mode: GedcomJobModeInput) {
     const jobMode = this.normalizeMode(mode);
 
     try {
       const analysis = await this.gedcomMergeService.analyzeFile(
+        treeId,
         fileBuffer,
         filename,
       );
@@ -44,6 +51,7 @@ export class GedcomJobService {
         async (tx) => {
           const createdJob = await tx.gedcomJob.create({
             data: {
+              treeId,
               mode: jobMode,
               status: 'READY',
               filename,
@@ -152,7 +160,7 @@ export class GedcomJobService {
         },
       );
 
-      return this.getJob(job.id);
+      return this.getJob(treeId, job.id);
     } catch (error) {
       this.logger.error(`GEDCOM job creation failed: ${error}`);
       throw new BadRequestException(
@@ -163,9 +171,9 @@ export class GedcomJobService {
     }
   }
 
-  async getJob(jobId: string) {
-    const job = await this.prisma.gedcomJob.findUnique({
-      where: { id: jobId },
+  async getJob(treeId: string, jobId: string) {
+    const job = await this.prisma.gedcomJob.findFirst({
+      where: { id: jobId, treeId },
     });
     if (!job) {
       throw new NotFoundException(`GEDCOM job "${jobId}" not found`);
@@ -173,8 +181,8 @@ export class GedcomJobService {
     return job;
   }
 
-  async getCandidates(jobId: string, page = 1, limit = 25) {
-    await this.getJob(jobId);
+  async getCandidates(treeId: string, jobId: string, page = 1, limit = 25) {
+    await this.getJob(treeId, jobId);
     const safePage = Math.max(1, Math.floor(page));
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
     const skip = (safePage - 1) * safeLimit;
@@ -203,11 +211,15 @@ export class GedcomJobService {
     );
     const existingPersons = existingPersonIds.length
       ? await this.prisma.person.findMany({
-          where: { id: { in: existingPersonIds } },
+          where: { treeId, id: { in: existingPersonIds } },
+          include: {
+            birthPlace: true,
+            deathPlace: true,
+          },
         })
       : [];
     const existingById = new Map(
-      existingPersons.map((person) => [person.id, person]),
+      existingPersons.map((person) => [person.id, this.serializePerson(person)]),
     );
 
     return {
@@ -232,10 +244,10 @@ export class GedcomJobService {
     };
   }
 
-  async applyJob(jobId: string, decisions: MergeDecision[]) {
-    const beforeConnectivity = await this.personService.getConnectivitySnapshot();
-    const job = await this.prisma.gedcomJob.findUnique({
-      where: { id: jobId },
+  async applyJob(treeId: string, jobId: string, decisions: MergeDecision[]) {
+    const beforeConnectivity = await this.personService.getConnectivitySnapshot(treeId);
+    const job = await this.prisma.gedcomJob.findFirst({
+      where: { id: jobId, treeId },
       include: {
         stagedPersons: {
           include: { candidates: { orderBy: { confidence: 'desc' } } },
@@ -291,14 +303,14 @@ export class GedcomJobService {
                 decision.mergeIntoPersonId || stagedRow.bestExistingPersonId;
               if (targetId) {
                 pointerToUuid.set(stagedRow.pointer, targetId);
-                await this.mergePersonData(tx, targetId, staged);
+                await this.mergePersonData(tx, treeId, targetId, staged);
                 result.personsMerged++;
                 await this.persistDecision(tx, stagedRow.id, decision, targetId);
                 continue;
               }
             }
 
-            const created = await this.createPersonFromStaged(tx, staged);
+            const created = await this.createPersonFromStaged(tx, treeId, staged);
             pointerToUuid.set(stagedRow.pointer, created.id);
             result.personsCreated++;
             await this.persistDecision(
@@ -311,6 +323,7 @@ export class GedcomJobService {
 
           const relationStats = await this.applyFamilies(
             tx,
+            treeId,
             job.stagedFamilies,
             pointerToUuid,
           );
@@ -324,7 +337,7 @@ export class GedcomJobService {
       );
 
       const afterConnectivity =
-        await this.personService.getConnectivitySnapshot();
+        await this.personService.getConnectivitySnapshot(treeId);
       const integrityAlert = this.buildIntegrityAlert(
         beforeConnectivity,
         afterConnectivity,
@@ -398,8 +411,13 @@ export class GedcomJobService {
     });
   }
 
-  private async mergePersonData(tx: any, personId: string, staged: StagedPerson) {
-    const existing = await tx.person.findUnique({ where: { id: personId } });
+  private async mergePersonData(
+    tx: any,
+    treeId: string,
+    personId: string,
+    staged: StagedPerson,
+  ) {
+    const existing = await tx.person.findFirst({ where: { id: personId, treeId } });
     if (!existing) return;
 
     const updates: Record<string, any> = {};
@@ -411,11 +429,15 @@ export class GedcomJobService {
     if (!existing.birthDate && staged.birthDate) {
       updates.birthDate = this.parseGedcomDate(staged.birthDate);
     }
-    if (!existing.birthPlace && staged.birthPlace) updates.birthPlace = staged.birthPlace;
+    if (!existing.birthPlaceId && staged.birthPlace) {
+      updates.birthPlaceId = await this.findOrCreatePlaceId(tx, staged.birthPlace);
+    }
     if (!existing.deathDate && staged.deathDate) {
       updates.deathDate = this.parseGedcomDate(staged.deathDate);
     }
-    if (!existing.deathPlace && staged.deathPlace) updates.deathPlace = staged.deathPlace;
+    if (!existing.deathPlaceId && staged.deathPlace) {
+      updates.deathPlaceId = await this.findOrCreatePlaceId(tx, staged.deathPlace);
+    }
     if (!existing.notes && staged.notes) updates.notes = staged.notes;
 
     const next = { ...existing, ...updates };
@@ -430,19 +452,24 @@ export class GedcomJobService {
     await tx.person.update({ where: { id: personId }, data: updates });
   }
 
-  private async createPersonFromStaged(tx: any, staged: StagedPerson) {
+  private async createPersonFromStaged(tx: any, treeId: string, staged: StagedPerson) {
     const birthDate = this.parseGedcomDate(staged.birthDate);
     const deathDate = this.parseGedcomDate(staged.deathDate);
+    const [birthPlaceId, deathPlaceId] = await Promise.all([
+      this.findOrCreatePlaceId(tx, staged.birthPlace),
+      this.findOrCreatePlaceId(tx, staged.deathPlace),
+    ]);
     return tx.person.create({
       data: {
+        treeId,
         givenNames: staged.givenNames || 'Unknown',
         birthSurname: staged.surname || null,
         usageSurname: staged.surname || null,
         gender: staged.gender,
         birthDate,
-        birthPlace: staged.birthPlace || null,
+        birthPlaceId,
         deathDate,
-        deathPlace: staged.deathPlace || null,
+        deathPlaceId,
         notes: staged.notes || null,
         ...this.normalizedPersonFields({
           givenNames: staged.givenNames || 'Unknown',
@@ -457,6 +484,7 @@ export class GedcomJobService {
 
   private async applyFamilies(
     tx: any,
+    treeId: string,
     families: Array<
       Pick<StagedFamily, 'husbandPointer' | 'wifePointer' | 'childPointers' | 'marriagePlace'> & {
         marriageDate?: string | null;
@@ -470,6 +498,7 @@ export class GedcomJobService {
       {
         partner1Id: string;
         partner2Id: string;
+        treeId: string;
         startDate: Date | null;
         startPlace: string | null;
       }
@@ -494,6 +523,7 @@ export class GedcomJobService {
           unionCandidates.set(key, {
             partner1Id,
             partner2Id,
+            treeId,
             startDate: this.parseGedcomDate(
               family.marriageDateRaw ?? family.marriageDate,
             ),
@@ -530,6 +560,7 @@ export class GedcomJobService {
       );
       const existingUnions = await tx.union.findMany({
         where: {
+          treeId,
           OR: [
             { partner1Id: { in: involvedIds } },
             { partner2Id: { in: involvedIds } },
@@ -599,6 +630,61 @@ export class GedcomJobService {
       birthYear: input.birthDate?.getFullYear() || null,
       deathYear: input.deathDate?.getFullYear() || null,
     };
+  }
+
+  private async findOrCreatePlaceId(tx: any, value?: string | null) {
+    const parsed = this.parsePlaceString(value);
+    if (!parsed) return null;
+
+    const existing = await tx.place.findFirst({
+      where: parsed,
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+
+    const created = await tx.place.create({
+      data: parsed,
+      select: { id: true },
+    });
+    return created.id;
+  }
+
+  private parsePlaceString(value?: string | null) {
+    const parts = (value || '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length === 0) return null;
+
+    return {
+      name: parts[0],
+      subdivision: parts.length >= 4 ? parts[1] : null,
+      region:
+        parts.length === 3
+          ? parts[1]
+          : parts.length >= 4
+          ? parts.slice(2, -1).join(', ')
+          : null,
+      country: parts.length >= 2 ? parts[parts.length - 1] : null,
+    };
+  }
+
+  private serializePerson<T extends { birthPlace?: PlaceLike; deathPlace?: PlaceLike }>(
+    person: T,
+  ) {
+    return {
+      ...person,
+      birthPlace: this.formatPlace(person.birthPlace || null),
+      deathPlace: this.formatPlace(person.deathPlace || null),
+    };
+  }
+
+  private formatPlace(place: PlaceLike) {
+    if (!place) return null;
+    return [place.name, place.subdivision, place.region, place.country]
+      .filter(Boolean)
+      .join(', ');
   }
 
   private buildIntegrityAlert(before: any, after: any) {

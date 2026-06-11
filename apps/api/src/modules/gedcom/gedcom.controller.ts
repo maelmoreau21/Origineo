@@ -49,12 +49,17 @@ export class GedcomController {
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Import a GEDCOM (.ged/.gedcom) file (creates all new)' })
-  async importGedcom(@UploadedFile() file: Express.Multer.File) {
+  @ApiQuery({ name: 'treeId', required: true, description: 'Tree UUID' })
+  async importGedcom(
+    @UploadedFile() file: Express.Multer.File,
+    @Query('treeId') treeId: string,
+  ) {
     this.assertGedcomFile(file);
+    this.assertTreeId(treeId);
 
     return {
       success: true,
-      data: await this.gedcomService.importGedcom(file.buffer, file.originalname),
+      data: await this.gedcomService.importGedcom(treeId, file.buffer, file.originalname),
       message: 'GEDCOM file imported successfully',
     };
   }
@@ -70,12 +75,18 @@ export class GedcomController {
     summary:
       'Analyze a GEDCOM file for merge: detect duplicates and return candidates',
   })
-  async mergeAnalyze(@UploadedFile() file: Express.Multer.File) {
+  @ApiQuery({ name: 'treeId', required: true, description: 'Tree UUID' })
+  async mergeAnalyze(
+    @UploadedFile() file: Express.Multer.File,
+    @Query('treeId') treeId: string,
+  ) {
     this.assertGedcomFile(file);
+    this.assertTreeId(treeId);
 
     return {
       success: true,
       data: await this.gedcomMergeService.analyzeFile(
+        treeId,
         file.buffer,
         file.originalname,
       ),
@@ -119,16 +130,20 @@ export class GedcomController {
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Create a persisted GEDCOM import or merge job' })
+  @ApiQuery({ name: 'treeId', required: true, description: 'Tree UUID' })
   @ApiQuery({ name: 'mode', required: false, enum: ['import', 'merge'] })
   async createJob(
     @UploadedFile() file: Express.Multer.File,
+    @Query('treeId') treeId: string,
     @Query('mode') mode: 'import' | 'merge' = 'import',
   ) {
     this.assertGedcomFile(file);
+    this.assertTreeId(treeId);
 
     return {
       success: true,
       data: await this.gedcomJobService.createJob(
+        treeId,
         file.buffer,
         file.originalname,
         mode,
@@ -142,10 +157,15 @@ export class GedcomController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get a GEDCOM job status' })
-  async getJob(@Param('id', ParseUUIDPipe) id: string) {
+  @ApiQuery({ name: 'treeId', required: true, description: 'Tree UUID' })
+  async getJob(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
+  ) {
+    this.assertTreeId(treeId);
     return {
       success: true,
-      data: await this.gedcomJobService.getJob(id),
+      data: await this.gedcomJobService.getJob(treeId, id),
     };
   }
 
@@ -154,16 +174,20 @@ export class GedcomController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get duplicate candidates for a GEDCOM job' })
+  @ApiQuery({ name: 'treeId', required: true, description: 'Tree UUID' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async getJobCandidates(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
+    this.assertTreeId(treeId);
     return {
       success: true,
       data: await this.gedcomJobService.getCandidates(
+        treeId,
         id,
         this.parsePositiveInt(page, 1, 10_000),
         this.parsePositiveInt(limit, 25, 100),
@@ -176,13 +200,16 @@ export class GedcomController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Apply decisions for a GEDCOM job' })
+  @ApiQuery({ name: 'treeId', required: true, description: 'Tree UUID' })
   async applyJob(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
     @Body() body: { decisions?: MergeDecision[] },
   ) {
+    this.assertTreeId(treeId);
     return {
       success: true,
-      data: await this.gedcomJobService.applyJob(id, body.decisions || []),
+      data: await this.gedcomJobService.applyJob(treeId, id, body.decisions || []),
       message: 'GEDCOM job applied',
     };
   }
@@ -195,13 +222,17 @@ export class GedcomController {
     required: false,
     description: 'Root person UUID for partial export',
   })
+  @ApiQuery({ name: 'treeId', required: true, description: 'Tree UUID' })
   @ApiQuery({ name: 'maxGenerations', required: false, type: Number })
   async exportGedcom(
     @Res() res: Response,
+    @Query('treeId') treeId: string,
     @Query('rootPersonId') rootPersonId?: string,
     @Query('maxGenerations') maxGenerations?: number,
   ) {
+    this.assertTreeId(treeId);
     const content = await this.gedcomService.exportGedcom(
+      treeId,
       rootPersonId,
       maxGenerations,
     );
@@ -226,6 +257,12 @@ export class GedcomController {
     const name = file.originalname.toLowerCase();
     if (!name.endsWith('.ged') && !name.endsWith('.gedcom')) {
       throw new BadRequestException('File must be a .ged or .gedcom file');
+    }
+  }
+
+  private assertTreeId(treeId?: string) {
+    if (!treeId) {
+      throw new BadRequestException('treeId is required');
     }
   }
 

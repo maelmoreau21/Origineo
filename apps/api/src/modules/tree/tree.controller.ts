@@ -23,11 +23,13 @@ export class TreeController {
   })
   @ApiQuery({ name: 'ancestors', required: false, type: Number, description: 'Number of ancestor generations (default: 4)' })
   @ApiQuery({ name: 'descendants', required: false, type: Number, description: 'Number of descendant generations (default: 2)' })
+  @ApiQuery({ name: 'treeId', required: true, type: String, description: 'Tree UUID' })
   @ApiQuery({ name: 'siblings', required: false, type: Boolean, description: 'Include root siblings and shared parents (default: true)' })
   @ApiQuery({ name: 'spouses', required: false, type: Boolean, description: 'Include spouses and co-parents in the active window (default: true)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Maximum visible persons in this tree window (default: 1200, max: 5000)' })
   async getTree(
     @Param('rootPersonId', ParseUUIDPipe) rootPersonId: string,
+    @Query('treeId', ParseUUIDPipe) treeId: string,
     @Query('ancestors') ancestors?: string,
     @Query('descendants') descendants?: string,
     @Query('siblings') siblings?: string,
@@ -41,6 +43,7 @@ export class TreeController {
     return {
       success: true,
       data: await this.treeService.getTree(
+        treeId,
         rootPersonId,
         ancestorDepth,
         descendantDepth,
@@ -55,13 +58,15 @@ export class TreeController {
 
   @Get('relationship/:personAId/:personBId')
   @ApiOperation({ summary: 'Calculate the relationship path between two persons' })
+  @ApiQuery({ name: 'treeId', required: true, type: String, description: 'Tree UUID' })
   async getRelationshipPath(
     @Param('personAId', ParseUUIDPipe) personAId: string,
     @Param('personBId', ParseUUIDPipe) personBId: string,
+    @Query('treeId', ParseUUIDPipe) treeId: string,
   ) {
     return {
       success: true,
-      data: await this.treeService.getRelationshipPath(personAId, personBId),
+      data: await this.treeService.getRelationshipPath(treeId, personAId, personBId),
     };
   }
 

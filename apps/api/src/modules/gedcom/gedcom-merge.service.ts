@@ -16,6 +16,13 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { PersonService } from '../person/person.service';
 
+type PlaceLike = {
+  name: string;
+  subdivision: string | null;
+  region: string | null;
+  country: string | null;
+} | null;
+
 /**
  * Represents a person parsed from a GEDCOM file,
  * before any merge decision is made.
@@ -91,6 +98,7 @@ export interface DuplicateCandidate {
  * Result of the merge analysis phase.
  */
 export interface MergeAnalysis {
+  treeId: string;
   sessionId: string;
   totalPersonsInFile: number;
   totalFamiliesInFile: number;
@@ -169,7 +177,7 @@ export class GedcomMergeService {
   // STEP 1: Analyze — Parse file + detect duplicates
   // ═══════════════════════════════════════
 
-  async analyzeFile(fileBuffer: Buffer, filename: string): Promise<MergeAnalysis> {
+  async analyzeFile(treeId: string, fileBuffer: Buffer, filename: string): Promise<MergeAnalysis> {
     this.logger.log(`Analyzing GEDCOM file for merge: ${filename}`);
 
     const { readGedcom } = await import('read-gedcom');
@@ -226,7 +234,8 @@ export class GedcomMergeService {
     }
 
     // Detect duplicates with existing database
-    const allExistingPersons = await this.prisma.person.findMany({
+    const allExistingPersonRows = await this.prisma.person.findMany({
+      where: { treeId },
       select: {
         id: true,
         givenNames: true,
@@ -234,11 +243,32 @@ export class GedcomMergeService {
         birthSurname: true,
         gender: true,
         birthDate: true,
-        birthPlace: true,
+        birthPlaceId: true,
+        birthPlace: {
+          select: {
+            name: true,
+            subdivision: true,
+            region: true,
+            country: true,
+          },
+        },
         deathDate: true,
-        deathPlace: true,
+        deathPlaceId: true,
+        deathPlace: {
+          select: {
+            name: true,
+            subdivision: true,
+            region: true,
+            country: true,
+          },
+        },
       },
     });
+    const allExistingPersons = allExistingPersonRows.map((person) => ({
+      ...person,
+      birthPlace: this.formatPlace(person.birthPlace),
+      deathPlace: this.formatPlace(person.deathPlace),
+    }));
 
     const duplicates: DuplicateCandidate[] = [];
     const newPersons: StagedPerson[] = [];
@@ -265,6 +295,7 @@ export class GedcomMergeService {
     // Generate session ID and store
     const sessionId = this.generateSessionId();
     const analysis: MergeAnalysis = {
+      treeId,
       sessionId,
       totalPersonsInFile: stagedPersons.length,
       totalFamiliesInFile: stagedFamilies.length,
@@ -290,8 +321,6 @@ export class GedcomMergeService {
     sessionId: string,
     decisions: MergeDecision[],
   ): Promise<MergeResult> {
-    const beforeConnectivity = await this.personService.getConnectivitySnapshot();
-
     const session = mergeSessions.get(sessionId);
     if (!session) {
       throw new NotFoundException(
@@ -300,6 +329,8 @@ export class GedcomMergeService {
     }
 
     const { analysis } = session;
+    const treeId = analysis.treeId;
+    const beforeConnectivity = await this.personService.getConnectivitySnapshot(treeId);
     const result: MergeResult = {
       personsCreated: 0,
       personsMerged: 0,
@@ -326,10 +357,10 @@ export class GedcomMergeService {
           if (dup.confidence >= 70) {
             pointerToUuid.set(dup.stagedPointer, dup.existingPersonId);
             // Optionally update existing person with new data
-            await this.mergePersonData(tx, dup.existingPersonId, dup.staged);
+            await this.mergePersonData(tx, treeId, dup.existingPersonId, dup.staged);
             result.personsMerged++;
           } else {
-            const newPerson = await this.createPersonFromStaged(tx, dup.staged);
+            const newPerson = await this.createPersonFromStaged(tx, treeId, dup.staged);
             pointerToUuid.set(dup.stagedPointer, newPerson.id);
             result.personsCreated++;
           }
@@ -340,12 +371,12 @@ export class GedcomMergeService {
           case 'merge': {
             const targetId = decision.mergeIntoPersonId || dup.existingPersonId;
             pointerToUuid.set(dup.stagedPointer, targetId);
-            await this.mergePersonData(tx, targetId, dup.staged);
+            await this.mergePersonData(tx, treeId, targetId, dup.staged);
             result.personsMerged++;
             break;
           }
           case 'create': {
-            const newPerson = await this.createPersonFromStaged(tx, dup.staged);
+            const newPerson = await this.createPersonFromStaged(tx, treeId, dup.staged);
             pointerToUuid.set(dup.stagedPointer, newPerson.id);
             result.personsCreated++;
             break;
@@ -365,18 +396,19 @@ export class GedcomMergeService {
           continue;
         }
 
-        const newPerson = await this.createPersonFromStaged(tx, staged);
+        const newPerson = await this.createPersonFromStaged(tx, treeId, staged);
         pointerToUuid.set(staged.pointer, newPerson.id);
         result.personsCreated++;
       }
 
       // ─── Process families (batched to avoid transaction timeout) ──────────────────────
       const unionCandidates = new Map<
-        string,
-        {
-          partner1Id: string;
-          partner2Id: string;
-          startDate: Date | null;
+          string,
+          {
+            partner1Id: string;
+            partner2Id: string;
+            treeId: string;
+            startDate: Date | null;
           startPlace: string | null;
         }
       >();
@@ -405,6 +437,7 @@ export class GedcomMergeService {
             unionCandidates.set(pairKey, {
               partner1Id,
               partner2Id,
+              treeId,
               startDate: this.parseGedcomDate(family.marriageDate),
               startPlace: family.marriagePlace || null,
             });
@@ -442,6 +475,7 @@ export class GedcomMergeService {
 
         const existingUnions = await tx.union.findMany({
           where: {
+            treeId,
             OR: [
               { partner1Id: { in: Array.from(involvedPartnerIds) } },
               { partner2Id: { in: Array.from(involvedPartnerIds) } },
@@ -463,6 +497,7 @@ export class GedcomMergeService {
         const unionsToCreate: Array<{
           partner1Id: string;
           partner2Id: string;
+          treeId: string;
           type: 'MARRIAGE';
           startDate: Date | null;
           startPlace: string | null;
@@ -474,6 +509,7 @@ export class GedcomMergeService {
           unionsToCreate.push({
             partner1Id: unionCandidate.partner1Id,
             partner2Id: unionCandidate.partner2Id,
+            treeId,
             type: 'MARRIAGE',
             startDate: unionCandidate.startDate,
             startPlace: unionCandidate.startPlace,
@@ -504,7 +540,7 @@ export class GedcomMergeService {
     // Clean up session
     mergeSessions.delete(sessionId);
 
-    const afterConnectivity = await this.personService.getConnectivitySnapshot();
+    const afterConnectivity = await this.personService.getConnectivitySnapshot(treeId);
     const disconnectedDelta =
       afterConnectivity.disconnectedComponents - beforeConnectivity.disconnectedComponents;
     const isolatedDelta =
@@ -651,8 +687,13 @@ export class GedcomMergeService {
    * Merge staged GEDCOM data into an existing person record.
    * Only fills in null/empty fields — never overwrites existing data.
    */
-  private async mergePersonData(tx: any, personId: string, staged: StagedPerson) {
-    const existing = await tx.person.findUnique({ where: { id: personId } });
+  private async mergePersonData(
+    tx: any,
+    treeId: string,
+    personId: string,
+    staged: StagedPerson,
+  ) {
+    const existing = await tx.person.findFirst({ where: { id: personId, treeId } });
     if (!existing) return;
 
     const updates: Record<string, any> = {};
@@ -669,14 +710,14 @@ export class GedcomMergeService {
     if (!existing.birthDate && staged.birthDate) {
       updates.birthDate = this.parseGedcomDate(staged.birthDate);
     }
-    if (!existing.birthPlace && staged.birthPlace) {
-      updates.birthPlace = staged.birthPlace;
+    if (!existing.birthPlaceId && staged.birthPlace) {
+      updates.birthPlaceId = await this.findOrCreatePlaceId(tx, staged.birthPlace);
     }
     if (!existing.deathDate && staged.deathDate) {
       updates.deathDate = this.parseGedcomDate(staged.deathDate);
     }
-    if (!existing.deathPlace && staged.deathPlace) {
-      updates.deathPlace = staged.deathPlace;
+    if (!existing.deathPlaceId && staged.deathPlace) {
+      updates.deathPlaceId = await this.findOrCreatePlaceId(tx, staged.deathPlace);
     }
     if (!existing.notes && staged.notes) {
       updates.notes = staged.notes;
@@ -697,20 +738,25 @@ export class GedcomMergeService {
     await tx.person.update({ where: { id: personId }, data: updates });
   }
 
-  private async createPersonFromStaged(tx: any, staged: StagedPerson) {
+  private async createPersonFromStaged(tx: any, treeId: string, staged: StagedPerson) {
     const birthDate = this.parseGedcomDate(staged.birthDate);
     const deathDate = this.parseGedcomDate(staged.deathDate);
+    const [birthPlaceId, deathPlaceId] = await Promise.all([
+      this.findOrCreatePlaceId(tx, staged.birthPlace),
+      this.findOrCreatePlaceId(tx, staged.deathPlace),
+    ]);
 
     return tx.person.create({
       data: {
+        treeId,
         givenNames: staged.givenNames || 'Unknown',
         birthSurname: staged.surname || null,
         usageSurname: staged.surname || null,
         gender: staged.gender,
         birthDate,
-        birthPlace: staged.birthPlace || null,
+        birthPlaceId,
         deathDate,
-        deathPlace: staged.deathPlace || null,
+        deathPlaceId,
         notes: staged.notes || null,
         ...this.normalizedPersonFields({
           givenNames: staged.givenNames || 'Unknown',
@@ -732,6 +778,51 @@ export class GedcomMergeService {
       .replace(/[\u0300-\u036f]/g, '') // Remove accents
       .replace(/[^a-z0-9\s]/g, '')
       .trim();
+  }
+
+  private async findOrCreatePlaceId(tx: any, value?: string | null) {
+    const parsed = this.parsePlaceString(value);
+    if (!parsed) return null;
+
+    const existing = await tx.place.findFirst({
+      where: parsed,
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+
+    const created = await tx.place.create({
+      data: parsed,
+      select: { id: true },
+    });
+    return created.id;
+  }
+
+  private parsePlaceString(value?: string | null) {
+    const parts = (value || '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length === 0) return null;
+
+    return {
+      name: parts[0],
+      subdivision: parts.length >= 4 ? parts[1] : null,
+      region:
+        parts.length === 3
+          ? parts[1]
+          : parts.length >= 4
+          ? parts.slice(2, -1).join(', ')
+          : null,
+      country: parts.length >= 2 ? parts[parts.length - 1] : null,
+    };
+  }
+
+  private formatPlace(place: PlaceLike) {
+    if (!place) return null;
+    return [place.name, place.subdivision, place.region, place.country]
+      .filter(Boolean)
+      .join(', ');
   }
 
   /**

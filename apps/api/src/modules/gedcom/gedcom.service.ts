@@ -6,6 +6,13 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PersonService } from '../person/person.service';
 
+type PlaceLike = {
+  name: string;
+  subdivision: string | null;
+  region: string | null;
+  country: string | null;
+} | null;
+
 /**
  * GEDCOM Service handles importing and exporting genealogy data
  * in the GEDCOM 5.5.1 format (.ged files).
@@ -28,10 +35,10 @@ export class GedcomService {
    * Import a GEDCOM file into the database.
    * Uses read-gedcom for tolerant parsing.
    */
-  async importGedcom(fileBuffer: Buffer, filename: string) {
+  async importGedcom(treeId: string, fileBuffer: Buffer, filename: string) {
     this.logger.log(`Importing GEDCOM file: ${filename}`);
 
-    const beforeConnectivity = await this.personService.getConnectivitySnapshot();
+    const beforeConnectivity = await this.personService.getConnectivitySnapshot(treeId);
 
     try {
       // Dynamic import of read-gedcom (ESM module)
@@ -61,17 +68,22 @@ export class GedcomService {
           const deathEvent = indi.getEventDeath();
           const birthDate = this.parseGedcomDate(birthEvent.getDate().value()?.[0]);
           const deathDate = this.parseGedcomDate(deathEvent.getDate().value()?.[0]);
+          const [birthPlaceId, deathPlaceId] = await Promise.all([
+            this.findOrCreatePlaceId(tx, birthEvent.getPlace().value()?.[0]),
+            this.findOrCreatePlaceId(tx, deathEvent.getPlace().value()?.[0]),
+          ]);
 
           const person = await tx.person.create({
             data: {
+              treeId,
               givenNames: nameParts.givenNames || 'Unknown',
               birthSurname: nameParts.surname || null,
               usageSurname: nameParts.surname || null,
               gender,
               birthDate,
-              birthPlace: birthEvent.getPlace().value()?.[0] || null,
+              birthPlaceId,
               deathDate,
-              deathPlace: deathEvent.getPlace().value()?.[0] || null,
+              deathPlaceId,
               notes: indi.getNote().value()?.[0] || null,
               ...this.normalizedPersonFields({
                 givenNames: nameParts.givenNames || 'Unknown',
@@ -96,6 +108,7 @@ export class GedcomService {
             type: 'MARRIAGE';
             startDate: Date | null;
             startPlace: string | null;
+            treeId: string;
           }
         >();
         const relationshipCandidates = new Map<
@@ -136,6 +149,7 @@ export class GedcomService {
                 type: 'MARRIAGE',
                 startDate: this.parseGedcomDate(marriageEvent.getDate().value()?.[0]),
                 startPlace: marriageEvent.getPlace().value()?.[0] || null,
+                treeId,
               });
             }
           }
@@ -186,7 +200,7 @@ export class GedcomService {
         timeout: GedcomService.IMPORT_TRANSACTION_TIMEOUT_MS,
       });
 
-      const afterConnectivity = await this.personService.getConnectivitySnapshot();
+      const afterConnectivity = await this.personService.getConnectivitySnapshot(treeId);
 
       const disconnectedDelta =
         afterConnectivity.disconnectedComponents - beforeConnectivity.disconnectedComponents;
@@ -220,7 +234,7 @@ export class GedcomService {
   /**
    * Export the entire database (or a branch) as GEDCOM 5.5.1 format.
    */
-  async exportGedcom(rootPersonId?: string, maxGenerations?: number) {
+  async exportGedcom(treeId: string, rootPersonId?: string, maxGenerations?: number) {
     let persons;
     let relationships;
     let unions;
@@ -228,12 +242,14 @@ export class GedcomService {
     if (rootPersonId && maxGenerations) {
       // Export a specific branch
       const personIds = await this.collectBranchPersonIds(
+        treeId,
         rootPersonId,
         maxGenerations,
       );
 
       persons = await this.prisma.person.findMany({
-        where: { id: { in: personIds } },
+        where: { treeId, id: { in: personIds } },
+        include: { birthPlace: true, deathPlace: true },
       });
       relationships = await this.prisma.relationship.findMany({
         where: {
@@ -243,18 +259,32 @@ export class GedcomService {
       });
       unions = await this.prisma.union.findMany({
         where: {
+          treeId,
           partner1Id: { in: personIds },
           partner2Id: { in: personIds },
         },
       });
     } else {
       // Export everything
-      persons = await this.prisma.person.findMany();
-      relationships = await this.prisma.relationship.findMany();
-      unions = await this.prisma.union.findMany();
+      persons = await this.prisma.person.findMany({
+        where: { treeId },
+        include: { birthPlace: true, deathPlace: true },
+      });
+      const personIds = persons.map((person) => person.id);
+      relationships = await this.prisma.relationship.findMany({
+        where: {
+          parentId: { in: personIds },
+          childId: { in: personIds },
+        },
+      });
+      unions = await this.prisma.union.findMany({ where: { treeId } });
     }
 
-    return this.generateGedcomContent(persons, relationships, unions);
+    return this.generateGedcomContent(
+      persons.map((person) => this.serializePerson(person)),
+      relationships,
+      unions,
+    );
   }
 
   /**
@@ -368,12 +398,16 @@ export class GedcomService {
    * Collect all person IDs in a branch starting from a root person.
    */
   private async collectBranchPersonIds(
+    treeId: string,
     rootId: string,
     maxGenerations: number,
   ): Promise<string[]> {
     const results = await this.prisma.$queryRaw<{ id: string }[]>`
       WITH RECURSIVE branch AS (
-        SELECT id, 0 AS generation FROM persons WHERE id = ${rootId}::uuid
+        SELECT id, 0 AS generation
+        FROM persons
+        WHERE id = ${rootId}::uuid
+          AND tree_id = ${treeId}::uuid
 
         UNION ALL
 
@@ -381,7 +415,9 @@ export class GedcomService {
         FROM persons p
         INNER JOIN relationships r ON (r.parent_id = p.id OR r.child_id = p.id)
         INNER JOIN branch b ON (r.child_id = b.id OR r.parent_id = b.id)
-        WHERE b.generation < ${maxGenerations} AND p.id != b.id
+        WHERE b.generation < ${maxGenerations}
+          AND p.id != b.id
+          AND p.tree_id = ${treeId}::uuid
       )
       SELECT DISTINCT id FROM branch
     `;
@@ -478,6 +514,61 @@ export class GedcomService {
       birthYear: input.birthDate?.getFullYear() || null,
       deathYear: input.deathDate?.getFullYear() || null,
     };
+  }
+
+  private async findOrCreatePlaceId(tx: any, value?: string | null) {
+    const parsed = this.parsePlaceString(value);
+    if (!parsed) return null;
+
+    const existing = await tx.place.findFirst({
+      where: parsed,
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+
+    const created = await tx.place.create({
+      data: parsed,
+      select: { id: true },
+    });
+    return created.id;
+  }
+
+  private parsePlaceString(value?: string | null) {
+    const parts = (value || '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length === 0) return null;
+
+    return {
+      name: parts[0],
+      subdivision: parts.length >= 4 ? parts[1] : null,
+      region:
+        parts.length === 3
+          ? parts[1]
+          : parts.length >= 4
+          ? parts.slice(2, -1).join(', ')
+          : null,
+      country: parts.length >= 2 ? parts[parts.length - 1] : null,
+    };
+  }
+
+  private serializePerson<T extends { birthPlace?: PlaceLike; deathPlace?: PlaceLike }>(
+    person: T,
+  ) {
+    return {
+      ...person,
+      birthPlace: this.formatPlace(person.birthPlace || null),
+      deathPlace: this.formatPlace(person.deathPlace || null),
+    };
+  }
+
+  private formatPlace(place: PlaceLike) {
+    if (!place) return null;
+    return [place.name, place.subdivision, place.region, place.country]
+      .filter(Boolean)
+      .join(', ');
   }
 
   private normalizeText(value: string) {

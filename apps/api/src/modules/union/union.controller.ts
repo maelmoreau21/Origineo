@@ -3,6 +3,7 @@
 // ══════════════════════════════════════
 
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -37,22 +38,38 @@ export class UnionController {
 
   @Get()
   @ApiOperation({ summary: 'List all unions (paginated)' })
+  @ApiQuery({ name: 'treeId', required: true })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
-  async findAll(@Query('page') page?: number, @Query('limit') limit?: number) {
-    return { success: true, data: await this.unionService.findAll(page, limit) };
+  async findAll(
+    @Query('treeId') treeId: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    this.assertTreeId(treeId);
+    return { success: true, data: await this.unionService.findAll(treeId, page, limit) };
   }
 
   @Get('person/:personId')
   @ApiOperation({ summary: 'Get all unions for a person' })
-  async findByPerson(@Param('personId', ParseUUIDPipe) personId: string) {
-    return { success: true, data: await this.unionService.findByPerson(personId) };
+  @ApiQuery({ name: 'treeId', required: true })
+  async findByPerson(
+    @Param('personId', ParseUUIDPipe) personId: string,
+    @Query('treeId') treeId: string,
+  ) {
+    this.assertTreeId(treeId);
+    return { success: true, data: await this.unionService.findByPerson(treeId, personId) };
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a union by ID' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return { success: true, data: await this.unionService.findOne(id) };
+  @ApiQuery({ name: 'treeId', required: true })
+  async findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
+  ) {
+    this.assertTreeId(treeId);
+    return { success: true, data: await this.unionService.findOne(treeId, id) };
   }
 
   @Patch(':id')
@@ -60,11 +77,14 @@ export class UnionController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a union' })
+  @ApiQuery({ name: 'treeId', required: true })
   async update(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
     @Body() dto: UpdateUnionDto,
   ) {
-    return { success: true, data: await this.unionService.update(id, dto) };
+    this.assertTreeId(treeId);
+    return { success: true, data: await this.unionService.update(treeId, id, dto) };
   }
 
   @Delete(':id')
@@ -72,8 +92,19 @@ export class UnionController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a union' })
-  async remove(@Param('id', ParseUUIDPipe) id: string) {
-    await this.unionService.remove(id);
+  @ApiQuery({ name: 'treeId', required: true })
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
+  ) {
+    this.assertTreeId(treeId);
+    await this.unionService.remove(treeId, id);
     return { success: true, message: 'Union deleted successfully' };
+  }
+
+  private assertTreeId(treeId?: string) {
+    if (!treeId) {
+      throw new BadRequestException('treeId is required.');
+    }
   }
 }

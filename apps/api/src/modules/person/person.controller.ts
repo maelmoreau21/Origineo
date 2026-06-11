@@ -46,27 +46,32 @@ export class PersonController {
 
   @Get()
   @ApiOperation({ summary: 'List all persons (paginated)' })
+  @ApiQuery({ name: 'treeId', required: true, type: String })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async findAll(
+    @Query('treeId') treeId: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
+    this.assertTreeId(treeId);
     const parsedPage = this.parsePositiveInt(page, 1);
     const parsedLimit = this.parsePositiveInt(limit, 20, 500);
 
     return {
       success: true,
-      data: await this.personService.findAll(parsedPage, parsedLimit),
+      data: await this.personService.findAll(treeId, parsedPage, parsedLimit),
     };
   }
 
   @Get('root')
   @ApiOperation({ summary: 'Get the default root person' })
-  async findRoot() {
+  @ApiQuery({ name: 'treeId', required: true, type: String })
+  async findRoot(@Query('treeId') treeId: string) {
+    this.assertTreeId(treeId);
     return {
       success: true,
-      data: await this.personService.findRootDefault(),
+      data: await this.personService.findRootDefault(treeId),
     };
   }
 
@@ -75,10 +80,12 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get integrity report for disconnected components and isolated persons' })
-  async getIntegrityReport() {
+  @ApiQuery({ name: 'treeId', required: true, type: String })
+  async getIntegrityReport(@Query('treeId') treeId: string) {
+    this.assertTreeId(treeId);
     return {
       success: true,
-      data: await this.personService.getIntegrityReport(),
+      data: await this.personService.getIntegrityReport(treeId),
     };
   }
 
@@ -87,10 +94,12 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get tree quality rules' })
-  async getQualityRules() {
+  @ApiQuery({ name: 'treeId', required: true, type: String })
+  async getQualityRules(@Query('treeId') treeId: string) {
+    this.assertTreeId(treeId);
     return {
       success: true,
-      data: await this.personService.getQualityRules(),
+      data: await this.personService.getQualityRules(treeId),
     };
   }
 
@@ -99,10 +108,16 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update tree quality rules' })
-  async updateQualityRules(@Request() req: any, @Body() dto: UpdateQualityRulesDto) {
+  @ApiQuery({ name: 'treeId', required: true, type: String })
+  async updateQualityRules(
+    @Request() req: any,
+    @Query('treeId') treeId: string,
+    @Body() dto: UpdateQualityRulesDto,
+  ) {
+    this.assertTreeId(treeId);
     return {
       success: true,
-      data: await this.personService.updateQualityRules(dto, req.user?.email),
+      data: await this.personService.updateQualityRules(treeId, dto, req.user?.email),
     };
   }
 
@@ -111,12 +126,17 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List tree repair logs' })
+  @ApiQuery({ name: 'treeId', required: true, type: String })
   @ApiQuery({ name: 'limit', required: false, type: Number })
-  async getRepairLogs(@Query('limit') limit?: string) {
+  async getRepairLogs(
+    @Query('treeId') treeId: string,
+    @Query('limit') limit?: string,
+  ) {
+    this.assertTreeId(treeId);
     const parsedLimit = this.parsePositiveInt(limit, 40, 500);
     return {
       success: true,
-      data: await this.personService.getRepairLogs(parsedLimit),
+      data: await this.personService.getRepairLogs(treeId, parsedLimit),
     };
   }
 
@@ -125,19 +145,22 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Undo a repair log entry if reversible' })
+  @ApiQuery({ name: 'treeId', required: true, type: String })
   @ApiQuery({ name: 'simulate', required: false, type: Boolean })
   async undoRepairLog(
     @Request() req: any,
     @Param('id') id: string,
+    @Query('treeId') treeId: string,
     @Query('simulate') simulate?: string,
   ) {
+    this.assertTreeId(treeId);
     const shouldSimulate = simulate === undefined
       ? false
       : this.parseBooleanQuery(simulate, 'simulate');
 
     return {
       success: true,
-      data: await this.personService.undoRepairLog(id, req.user?.email, shouldSimulate),
+      data: await this.personService.undoRepairLog(treeId, id, req.user?.email, shouldSimulate),
     };
   }
 
@@ -146,11 +169,14 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Re-assign default root to main connected component' })
+  @ApiQuery({ name: 'treeId', required: true, type: String })
   @ApiQuery({ name: 'simulate', required: false, type: Boolean })
   async repairRootDefault(
     @Request() req: any,
+    @Query('treeId') treeId: string,
     @Query('simulate') simulate?: string,
   ) {
+    this.assertTreeId(treeId);
     const shouldSimulate = simulate === undefined
       ? false
       : this.parseBooleanQuery(simulate, 'simulate');
@@ -158,6 +184,7 @@ export class PersonController {
     return {
       success: true,
       data: await this.personService.repairRootDefaultToMainComponent({
+        treeId,
         simulate: shouldSimulate,
         actor: req.user?.email,
       }),
@@ -169,11 +196,18 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Connect a disconnected component to main component' })
-  async connectComponent(@Request() req: any, @Body() dto: ConnectDisconnectedComponentDto) {
+  @ApiQuery({ name: 'treeId', required: true, type: String })
+  async connectComponent(
+    @Request() req: any,
+    @Query('treeId') treeId: string,
+    @Body() dto: ConnectDisconnectedComponentDto,
+  ) {
+    this.assertTreeId(treeId);
     return {
       success: true,
       data: await this.personService.connectDisconnectedComponent({
         ...dto,
+        treeId,
         actor: req.user?.email,
       }),
     };
@@ -190,13 +224,16 @@ export class PersonController {
     type: String,
     description: 'Safety confirmation token. Must be DELETE_COMPONENT.',
   })
+  @ApiQuery({ name: 'treeId', required: true, type: String })
   @ApiQuery({ name: 'simulate', required: false, type: Boolean })
   async removeDisconnectedComponent(
     @Request() req: any,
     @Param('personId', ParseUUIDPipe) personId: string,
+    @Query('treeId') treeId: string,
     @Query('confirm') confirm?: string,
     @Query('simulate') simulate?: string,
   ) {
+    this.assertTreeId(treeId);
     if (confirm !== 'DELETE_COMPONENT') {
       throw new BadRequestException(
         'Missing confirmation token. Use confirm=DELETE_COMPONENT.',
@@ -209,7 +246,7 @@ export class PersonController {
 
     return {
       success: true,
-      data: await this.personService.removeDisconnectedComponent(personId, {
+      data: await this.personService.removeDisconnectedComponent(treeId, personId, {
         simulate: shouldSimulate,
         actor: req.user?.email,
       }),
@@ -222,24 +259,32 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get person modification history' })
+  @ApiQuery({ name: 'treeId', required: true, type: String })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async getPersonHistory(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
     @Query('limit') limit?: string,
   ) {
+    this.assertTreeId(treeId);
     const parsedLimit = this.parsePositiveInt(limit, 120, 500);
     return {
       success: true,
-      data: await this.personService.getPersonHistory(id, parsedLimit),
+      data: await this.personService.getPersonHistory(treeId, id, parsedLimit),
     };
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a person by ID with relationships' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string) {
+  @ApiQuery({ name: 'treeId', required: true, type: String })
+  async findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
+  ) {
+    this.assertTreeId(treeId);
     return {
       success: true,
-      data: await this.personService.findOne(id),
+      data: await this.personService.findOne(treeId, id),
     };
   }
 
@@ -248,14 +293,17 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a person' })
+  @ApiQuery({ name: 'treeId', required: true, type: String })
   async update(
     @Request() req: any,
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
     @Body() dto: UpdatePersonDto,
   ) {
+    this.assertTreeId(treeId);
     return {
       success: true,
-      data: await this.personService.update(id, dto, req.user?.email),
+      data: await this.personService.update(treeId, id, dto, req.user?.email),
     };
   }
 
@@ -264,14 +312,17 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a branch from a person (descendants + optional root person)' })
+  @ApiQuery({ name: 'treeId', required: true, type: String })
   @ApiQuery({ name: 'includeRoot', required: false, type: Boolean, description: 'true by default. If false, keeps selected person and deletes descendants only.' })
   @ApiQuery({ name: 'simulate', required: false, type: Boolean, description: 'Preview impacted persons, relationships, unions and documents without deleting.' })
   async removeBranch(
     @Request() req: any,
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
     @Query('includeRoot') includeRoot?: string,
     @Query('simulate') simulate?: string,
   ) {
+    this.assertTreeId(treeId);
     const shouldIncludeRoot = includeRoot === undefined
       ? true
       : this.parseBooleanQuery(includeRoot, 'includeRoot');
@@ -282,6 +333,7 @@ export class PersonController {
     return {
       success: true,
       data: await this.personService.removeBranch(
+        treeId,
         id,
         shouldIncludeRoot,
         req.user?.email,
@@ -300,20 +352,26 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete the entire tree (all persons and linked entities)' })
+  @ApiQuery({ name: 'treeId', required: true, type: String })
   @ApiQuery({
     name: 'confirm',
     required: true,
     type: String,
     description: 'Safety confirmation token. Must be DELETE_ALL.',
   })
-  async removeAll(@Request() req: any, @Query('confirm') confirm?: string) {
+  async removeAll(
+    @Request() req: any,
+    @Query('treeId') treeId: string,
+    @Query('confirm') confirm?: string,
+  ) {
+    this.assertTreeId(treeId);
     if (confirm !== 'DELETE_ALL') {
       throw new BadRequestException('Missing confirmation token. Use confirm=DELETE_ALL.');
     }
 
     return {
       success: true,
-      data: await this.personService.removeAll(req.user?.email),
+      data: await this.personService.removeAll(treeId, req.user?.email),
       message: 'Tree deleted successfully',
     };
   }
@@ -323,9 +381,21 @@ export class PersonController {
   @Roles('ADMIN')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a person' })
-  async remove(@Request() req: any, @Param('id', ParseUUIDPipe) id: string) {
-    await this.personService.remove(id, req.user?.email);
+  @ApiQuery({ name: 'treeId', required: true, type: String })
+  async remove(
+    @Request() req: any,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
+  ) {
+    this.assertTreeId(treeId);
+    await this.personService.remove(treeId, id, req.user?.email);
     return { success: true, message: 'Person deleted successfully' };
+  }
+
+  private assertTreeId(treeId?: string) {
+    if (!treeId) {
+      throw new BadRequestException('treeId is required.');
+    }
   }
 
   private parsePositiveInt(value: string | undefined, fallback: number, max = Number.MAX_SAFE_INTEGER) {

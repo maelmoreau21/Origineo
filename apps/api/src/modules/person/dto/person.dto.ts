@@ -9,6 +9,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsUUID,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 
@@ -20,6 +21,10 @@ enum Gender {
 }
 
 export class CreatePersonDto {
+  @ApiProperty({ description: 'UUID of the tree this person belongs to' })
+  @IsUUID()
+  treeId: string;
+
   @ApiPropertyOptional({ example: 'Dupont' })
   @IsOptional()
   @IsString()

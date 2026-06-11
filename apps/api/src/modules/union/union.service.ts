@@ -21,8 +21,8 @@ export class UnionService {
 
     // Verify both persons exist
     const [p1, p2] = await Promise.all([
-      this.prisma.person.findUnique({ where: { id: dto.partner1Id } }),
-      this.prisma.person.findUnique({ where: { id: dto.partner2Id } }),
+      this.prisma.person.findFirst({ where: { id: dto.partner1Id, treeId: dto.treeId } }),
+      this.prisma.person.findFirst({ where: { id: dto.partner2Id, treeId: dto.treeId } }),
     ]);
 
     if (!p1) throw new NotFoundException(`Partner 1 with ID "${dto.partner1Id}" not found`);
@@ -36,6 +36,7 @@ export class UnionService {
 
     return this.prisma.union.create({
       data: {
+        treeId: dto.treeId,
         partner1Id: dto.partner1Id,
         partner2Id: dto.partner2Id,
         type: dto.type || 'MARRIAGE',
@@ -52,25 +53,26 @@ export class UnionService {
     });
   }
 
-  async findAll(page = 1, limit = 20) {
+  async findAll(treeId: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
 
     const [unions, total] = await this.prisma.$transaction([
       this.prisma.union.findMany({
+        where: { treeId },
         skip,
         take: limit,
         include: { partner1: true, partner2: true },
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.union.count(),
+      this.prisma.union.count({ where: { treeId } }),
     ]);
 
     return { data: unions, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async findOne(id: string) {
-    const union = await this.prisma.union.findUnique({
-      where: { id },
+  async findOne(treeId: string, id: string) {
+    const union = await this.prisma.union.findFirst({
+      where: { id, treeId },
       include: {
         partner1: true,
         partner2: true,
@@ -82,17 +84,21 @@ export class UnionService {
     return union;
   }
 
-  async findByPerson(personId: string) {
+  async findByPerson(treeId: string, personId: string) {
     return this.prisma.union.findMany({
       where: {
+        treeId,
         OR: [{ partner1Id: personId }, { partner2Id: personId }],
       },
       include: { partner1: true, partner2: true },
     });
   }
 
-  async update(id: string, dto: UpdateUnionDto) {
-    const existingUnion = await this.findOne(id);
+  async update(treeId: string, id: string, dto: UpdateUnionDto) {
+    if (dto.treeId && dto.treeId !== treeId) {
+      throw new BadRequestException('treeId cannot be changed during union update');
+    }
+    const existingUnion = await this.findOne(treeId, id);
 
     const startDate =
       dto.startDate !== undefined
@@ -129,8 +135,8 @@ export class UnionService {
     });
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
+  async remove(treeId: string, id: string) {
+    await this.findOne(treeId, id);
     return this.prisma.union.delete({ where: { id } });
   }
 

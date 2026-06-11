@@ -92,6 +92,13 @@ type TreeQualityViolation = {
   severity: IntegritySeverity;
 };
 
+type PlaceLike = {
+  name: string;
+  subdivision: string | null;
+  region: string | null;
+  country: string | null;
+} | null;
+
 const TREE_QUALITY_RULES_KEY = 'TREE_QUALITY_RULES';
 const TREE_REPAIR_LOGS_KEY = 'TREE_REPAIR_LOGS';
 const PERSON_HISTORY_LOGS_KEY = 'PERSON_HISTORY_LOGS';
@@ -156,9 +163,15 @@ export class PersonService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreatePersonDto, actor = DEFAULT_ACTOR) {
+    await this.assertTreeExists(dto.treeId);
+
     const birthDate = dto.birthDate ? new Date(dto.birthDate) : null;
     const deathDate = dto.deathDate ? new Date(dto.deathDate) : null;
     this.validatePersonChronology(birthDate, deathDate);
+    const [birthPlaceId, deathPlaceId] = await Promise.all([
+      this.findOrCreatePlaceId(dto.birthPlace),
+      this.findOrCreatePlaceId(dto.deathPlace),
+    ]);
     const normalizedFields = this.buildNormalizedPersonFields({
       givenNames: dto.givenNames,
       usageSurname: dto.usageSurname,
@@ -170,21 +183,22 @@ export class PersonService {
     // If setting as root default, unset any existing root
     if (dto.isRootDefault) {
       await this.prisma.person.updateMany({
-        where: { isRootDefault: true },
+        where: { treeId: dto.treeId, isRootDefault: true },
         data: { isRootDefault: false },
       });
     }
 
     const created = await this.prisma.person.create({
       data: {
+        treeId: dto.treeId,
         usageSurname: dto.usageSurname,
         birthSurname: dto.birthSurname,
         givenNames: dto.givenNames,
         gender: dto.gender || 'UNKNOWN',
         birthDate,
-        birthPlace: dto.birthPlace,
+        birthPlaceId,
         deathDate,
-        deathPlace: dto.deathPlace,
+        deathPlaceId,
         professions: dto.professions || [],
         notes: dto.notes,
         ...normalizedFields,
@@ -202,6 +216,10 @@ export class PersonService {
         residences: dto.residences || [],
         isRootDefault: dto.isRootDefault || false,
       },
+      include: {
+        birthPlace: true,
+        deathPlace: true,
+      },
     });
 
     await this.appendPersonHistory([
@@ -218,10 +236,12 @@ export class PersonService {
       },
     ]);
 
-    return created;
+    return this.serializePerson(created);
   }
 
-  async findAll(page = 1, limit = 20) {
+  async findAll(treeId: string, page = 1, limit = 20) {
+    await this.assertTreeExists(treeId);
+
     const safePage = Number.isFinite(page)
       ? Math.max(1, Math.floor(page))
       : 1;
@@ -232,15 +252,20 @@ export class PersonService {
 
     const [persons, total] = await this.prisma.$transaction([
       this.prisma.person.findMany({
+        where: { treeId },
         skip,
         take: safeLimit,
+        include: {
+          birthPlace: true,
+          deathPlace: true,
+        },
         orderBy: { updatedAt: 'desc' },
       }),
-      this.prisma.person.count(),
+      this.prisma.person.count({ where: { treeId } }),
     ]);
 
     return {
-      data: persons,
+      data: persons.map((person) => this.serializePerson(person)),
       total,
       page: safePage,
       limit: safeLimit,
@@ -248,10 +273,12 @@ export class PersonService {
     };
   }
 
-  async findOne(id: string) {
-    const person = await this.prisma.person.findUnique({
-      where: { id },
+  async findOne(treeId: string, id: string) {
+    const person = await this.prisma.person.findFirst({
+      where: { id, treeId },
       include: {
+        birthPlace: true,
+        deathPlace: true,
         parentRelationships: {
           include: {
             child: {
@@ -280,18 +307,30 @@ export class PersonService {
       throw new NotFoundException(`Person with ID "${id}" not found`);
     }
 
-    return person;
+    return this.serializePerson(person);
   }
 
-  async findRootDefault() {
-    return this.prisma.person.findFirst({
-      where: { isRootDefault: true },
+  async findRootDefault(treeId: string) {
+    await this.assertTreeExists(treeId);
+
+    const root = await this.prisma.person.findFirst({
+      where: { treeId, isRootDefault: true },
+      include: {
+        birthPlace: true,
+        deathPlace: true,
+      },
     });
+
+    return root ? this.serializePerson(root) : null;
   }
 
-  async update(id: string, dto: UpdatePersonDto, actor = DEFAULT_ACTOR) {
+  async update(treeId: string, id: string, dto: UpdatePersonDto, actor = DEFAULT_ACTOR) {
     // Verify person exists
-    const existingPerson = await this.findOne(id);
+    const existingPerson = await this.findOne(treeId, id);
+
+    if (dto.treeId && dto.treeId !== treeId) {
+      throw new BadRequestException('treeId cannot be changed during person update.');
+    }
 
     const nextBirthDate =
       dto.birthDate !== undefined
@@ -313,12 +352,12 @@ export class PersonService {
     // If setting as root default, unset any existing root
     if (dto.isRootDefault) {
       await this.prisma.person.updateMany({
-        where: { isRootDefault: true, id: { not: id } },
+        where: { treeId, isRootDefault: true, id: { not: id } },
         data: { isRootDefault: false },
       });
     }
 
-    const data: Prisma.PersonUpdateInput = {};
+    const data: Prisma.PersonUncheckedUpdateInput = {};
 
     if (dto.usageSurname !== undefined) data.usageSurname = dto.usageSurname;
     if (dto.birthSurname !== undefined) data.birthSurname = dto.birthSurname;
@@ -326,10 +365,12 @@ export class PersonService {
     if (dto.gender !== undefined) data.gender = dto.gender;
     if (dto.birthDate !== undefined)
       data.birthDate = nextBirthDate;
-    if (dto.birthPlace !== undefined) data.birthPlace = dto.birthPlace;
+    if (dto.birthPlace !== undefined)
+      data.birthPlaceId = await this.findOrCreatePlaceId(dto.birthPlace);
     if (dto.deathDate !== undefined)
       data.deathDate = nextDeathDate;
-    if (dto.deathPlace !== undefined) data.deathPlace = dto.deathPlace;
+    if (dto.deathPlace !== undefined)
+      data.deathPlaceId = await this.findOrCreatePlaceId(dto.deathPlace);
     if (dto.professions !== undefined) data.professions = dto.professions;
     if (dto.notes !== undefined) data.notes = dto.notes;
     if (dto.nickname !== undefined) data.nickname = dto.nickname;
@@ -360,7 +401,12 @@ export class PersonService {
     const updated = await this.prisma.person.update({
       where: { id },
       data,
+      include: {
+        birthPlace: true,
+        deathPlace: true,
+      },
     });
+    const serializedUpdated = this.serializePerson(updated);
 
     await this.appendPersonHistory([
       {
@@ -388,21 +434,21 @@ export class PersonService {
             gender: updated.gender,
             birthDate: updated.birthDate?.toISOString() || null,
             deathDate: updated.deathDate?.toISOString() || null,
-            birthPlace: updated.birthPlace,
-            deathPlace: updated.deathPlace,
+            birthPlace: serializedUpdated.birthPlace,
+            deathPlace: serializedUpdated.deathPlace,
             isRootDefault: updated.isRootDefault,
           },
         },
       },
     ]);
 
-    return updated;
+    return serializedUpdated;
   }
 
-  async remove(id: string, actor = DEFAULT_ACTOR) {
-    const existing = await this.findOne(id);
+  async remove(treeId: string, id: string, actor = DEFAULT_ACTOR) {
+    const existing = await this.findOne(treeId, id);
     const deleted = await this.prisma.person.delete({ where: { id } });
-    await this.ensureRootDefaultExists();
+    await this.ensureRootDefaultExists(treeId);
 
     await this.appendPersonHistory([
       {
@@ -423,14 +469,15 @@ export class PersonService {
   }
 
   async removeBranch(
+    treeId: string,
     rootId: string,
     includeRoot = true,
     actor = DEFAULT_ACTOR,
     simulate = false,
   ) {
-    await this.findOne(rootId);
+    await this.findOne(treeId, rootId);
 
-    const descendantIds = await this.getDescendantIds(rootId);
+    const descendantIds = await this.getDescendantIds(treeId, rootId);
     const targetIds = Array.from(
       new Set(includeRoot ? [rootId, ...descendantIds] : descendantIds),
     );
@@ -466,7 +513,7 @@ export class PersonService {
     const [documentsDeleted, personsDeleted] = await this.prisma.$transaction(
       async (tx) => {
         const documentsResult = await tx.document.deleteMany({ where: deletionPlan.documentsDeleteWhere });
-        const personsResult = await tx.person.deleteMany({ where: { id: { in: targetIds } } });
+        const personsResult = await tx.person.deleteMany({ where: { treeId, id: { in: targetIds } } });
         return [documentsResult.count, personsResult.count] as const;
       },
       {
@@ -475,7 +522,7 @@ export class PersonService {
       },
     );
 
-    await this.ensureRootDefaultExists();
+    await this.ensureRootDefaultExists(treeId);
 
     await this.appendPersonHistory([
       {
@@ -506,11 +553,33 @@ export class PersonService {
     };
   }
 
-  async removeAll(actor = DEFAULT_ACTOR) {
+  async removeAll(treeId: string, actor = DEFAULT_ACTOR) {
+    await this.assertTreeExists(treeId);
+
+    const treePersonIds = (
+      await this.prisma.person.findMany({
+        where: { treeId },
+        select: { id: true },
+      })
+    ).map((person) => person.id);
+    const treeUnionIds = (
+      await this.prisma.union.findMany({
+        where: { treeId },
+        select: { id: true },
+      })
+    ).map((union) => union.id);
+
     const [personsBefore, relationshipsBefore, unionsBefore] = await this.prisma.$transaction([
-      this.prisma.person.count(),
-      this.prisma.relationship.count(),
-      this.prisma.union.count(),
+      this.prisma.person.count({ where: { treeId } }),
+      this.prisma.relationship.count({
+        where: {
+          OR: [
+            { parentId: { in: treePersonIds } },
+            { childId: { in: treePersonIds } },
+          ],
+        },
+      }),
+      this.prisma.union.count({ where: { treeId } }),
     ]);
 
     if (personsBefore === 0) {
@@ -524,8 +593,15 @@ export class PersonService {
 
     const [documentsDeleted, personsDeleted] = await this.prisma.$transaction(
       async (tx) => {
-        const documentsResult = await tx.document.deleteMany({});
-        const personsResult = await tx.person.deleteMany({});
+        const documentsResult = await tx.document.deleteMany({
+          where: {
+            OR: [
+              { personId: { in: treePersonIds } },
+              { unionId: { in: treeUnionIds } },
+            ],
+          },
+        });
+        const personsResult = await tx.person.deleteMany({ where: { treeId } });
         return [documentsResult.count, personsResult.count] as const;
       },
       {
@@ -558,11 +634,11 @@ export class PersonService {
     };
   }
 
-  async getIntegrityReport() {
+  async getIntegrityReport(treeId: string) {
     const [context, qualityRules, repairLogs] = await Promise.all([
-      this.buildIntegrityContext(),
-      this.getQualityRules(),
-      this.getRepairLogs(20),
+      this.buildIntegrityContext(treeId),
+      this.getQualityRules(treeId),
+      this.getRepairLogs(treeId, 20),
     ]);
 
     const rootSummary = context.rootPersonId
@@ -702,9 +778,9 @@ export class PersonService {
     };
   }
 
-  async getQualityRules(): Promise<QualityRules> {
+  async getQualityRules(treeId: string): Promise<QualityRules> {
     const persisted = await this.getJsonSetting<Partial<QualityRules>>(
-      TREE_QUALITY_RULES_KEY,
+      this.treeSettingKey(TREE_QUALITY_RULES_KEY, treeId),
       {},
     );
 
@@ -717,10 +793,11 @@ export class PersonService {
   }
 
   async updateQualityRules(
+    treeId: string,
     input: Partial<QualityRules>,
     actor = DEFAULT_ACTOR,
   ): Promise<QualityRules> {
-    const current = await this.getQualityRules();
+    const current = await this.getQualityRules(treeId);
 
     const next: QualityRules = {
       requireParentKnown:
@@ -753,9 +830,9 @@ export class PersonService {
       );
     }
 
-    await this.setJsonSetting(TREE_QUALITY_RULES_KEY, next);
+    await this.setJsonSetting(this.treeSettingKey(TREE_QUALITY_RULES_KEY, treeId), next);
 
-    await this.appendRepairLogs([
+    await this.appendRepairLogs(treeId, [
       {
         id: this.makeEventId('quality-rules-update'),
         action: 'UNDO_REPAIR',
@@ -775,17 +852,22 @@ export class PersonService {
     return next;
   }
 
-  async getRepairLogs(limit = 100): Promise<RepairLogEntry[]> {
-    const logs = await this.getJsonSetting<RepairLogEntry[]>(TREE_REPAIR_LOGS_KEY, []);
+  async getRepairLogs(treeId: string, limit = 100): Promise<RepairLogEntry[]> {
+    const logs = await this.getJsonSetting<RepairLogEntry[]>(
+      this.treeSettingKey(TREE_REPAIR_LOGS_KEY, treeId),
+      [],
+    );
     return [...logs].reverse().slice(0, Math.max(1, Math.min(500, limit)));
   }
 
   async undoRepairLog(
+    treeId: string,
     logId: string,
     actor = DEFAULT_ACTOR,
     simulate = false,
   ) {
-    const logs = await this.getJsonSetting<RepairLogEntry[]>(TREE_REPAIR_LOGS_KEY, []);
+    const repairLogsKey = this.treeSettingKey(TREE_REPAIR_LOGS_KEY, treeId);
+    const logs = await this.getJsonSetting<RepairLogEntry[]>(repairLogsKey, []);
     const targetIndex = logs.findIndex((entry) => entry.id === logId);
     if (targetIndex < 0) {
       throw new NotFoundException(`Repair log with ID "${logId}" not found`);
@@ -818,13 +900,13 @@ export class PersonService {
       await this.prisma.$transaction(
         async (tx) => {
           await tx.person.updateMany({
-            where: { isRootDefault: true },
+            where: { treeId, isRootDefault: true },
             data: { isRootDefault: false },
           });
 
           if (previousRootIds.length > 0) {
             await tx.person.updateMany({
-              where: { id: { in: previousRootIds } },
+              where: { treeId, id: { in: previousRootIds } },
               data: { isRootDefault: true },
             });
           }
@@ -835,7 +917,7 @@ export class PersonService {
         },
       );
 
-      await this.ensureRootDefaultExists();
+      await this.ensureRootDefaultExists(treeId);
 
       const undoLogId = this.makeEventId('undo-repair-root');
       const now = new Date().toISOString();
@@ -861,7 +943,7 @@ export class PersonService {
         },
       });
 
-      await this.setJsonSetting(TREE_REPAIR_LOGS_KEY, logs.slice(-MAX_REPAIR_LOGS));
+      await this.setJsonSetting(repairLogsKey, logs.slice(-MAX_REPAIR_LOGS));
 
       return {
         changed: true,
@@ -920,7 +1002,7 @@ export class PersonService {
         },
       });
 
-      await this.setJsonSetting(TREE_REPAIR_LOGS_KEY, logs.slice(-MAX_REPAIR_LOGS));
+      await this.setJsonSetting(repairLogsKey, logs.slice(-MAX_REPAIR_LOGS));
 
       return {
         changed: true,
@@ -933,7 +1015,8 @@ export class PersonService {
     throw new BadRequestException('Ce type d\'action ne supporte pas l\'annulation.');
   }
 
-  async getPersonHistory(personId: string, limit = 120) {
+  async getPersonHistory(treeId: string, personId: string, limit = 120) {
+    await this.findOne(treeId, personId);
     const logs = await this.getJsonSetting<PersonHistoryEntry[]>(PERSON_HISTORY_LOGS_KEY, []);
     const filtered = logs
       .filter((entry) => entry.personId === personId)
@@ -942,13 +1025,18 @@ export class PersonService {
   }
 
   async repairRootDefaultToMainComponent(options?: {
+    treeId: string;
     simulate?: boolean;
     actor?: string;
   }) {
+    const treeId = options?.treeId;
+    if (!treeId) {
+      throw new BadRequestException('treeId is required.');
+    }
     const simulate = Boolean(options?.simulate);
     const actor = options?.actor || DEFAULT_ACTOR;
 
-    const context = await this.buildIntegrityContext();
+    const context = await this.buildIntegrityContext(treeId);
 
     if (!context.mainComponent) {
       return {
@@ -991,7 +1079,7 @@ export class PersonService {
     if (!simulate) {
       await this.prisma.$transaction([
         this.prisma.person.updateMany({
-          where: { isRootDefault: true },
+          where: { treeId, isRootDefault: true },
           data: { isRootDefault: false },
         }),
         this.prisma.person.update({
@@ -1001,7 +1089,7 @@ export class PersonService {
       ]);
 
       const logId = this.makeEventId('repair-root-default');
-      await this.appendRepairLogs([
+      await this.appendRepairLogs(treeId, [
         {
           id: logId,
           action: 'REPAIR_ROOT_DEFAULT',
@@ -1042,6 +1130,7 @@ export class PersonService {
   }
 
   async connectDisconnectedComponent(input: {
+    treeId: string;
     componentPersonId: string;
     anchorPersonId?: string;
     linkMode?: IntegrityLinkMode;
@@ -1050,13 +1139,14 @@ export class PersonService {
     simulate?: boolean;
     actor?: string;
   }) {
+    const treeId = input.treeId;
     const linkMode = input.linkMode || 'PARENT_OF_COMPONENT';
     const relationshipType = input.relationshipType || 'FOSTER';
     const unionType = input.unionType || 'OTHER';
     const simulate = Boolean(input.simulate);
     const actor = input.actor || DEFAULT_ACTOR;
 
-    const context = await this.buildIntegrityContext();
+    const context = await this.buildIntegrityContext(treeId);
     if (!context.mainComponent) {
       throw new BadRequestException('Impossible de rattacher un composant: arbre vide.');
     }
@@ -1106,6 +1196,7 @@ export class PersonService {
     if (linkMode === 'UNION') {
       const existingUnion = await this.prisma.union.findFirst({
         where: {
+          treeId,
           OR: [
             { partner1Id: anchorPersonId, partner2Id: input.componentPersonId },
             { partner1Id: input.componentPersonId, partner2Id: anchorPersonId },
@@ -1132,13 +1223,14 @@ export class PersonService {
 
       const createdUnion = await this.prisma.union.create({
         data: {
+          treeId,
           partner1Id: anchorPersonId,
           partner2Id: input.componentPersonId,
           type: unionType,
         },
       });
 
-      await this.appendRepairLogs([
+      await this.appendRepairLogs(treeId, [
         {
           id: this.makeEventId('connect-component-union'),
           action: 'CONNECT_COMPONENT',
@@ -1223,7 +1315,7 @@ export class PersonService {
       },
     });
 
-    await this.appendRepairLogs([
+    await this.appendRepairLogs(treeId, [
       {
         id: this.makeEventId('connect-component-relationship'),
         action: 'CONNECT_COMPONENT',
@@ -1274,13 +1366,14 @@ export class PersonService {
   }
 
   async removeDisconnectedComponent(
+    treeId: string,
     personId: string,
     options?: { simulate?: boolean; actor?: string },
   ) {
     const simulate = Boolean(options?.simulate);
     const actor = options?.actor || DEFAULT_ACTOR;
 
-    const context = await this.buildIntegrityContext();
+    const context = await this.buildIntegrityContext(treeId);
 
     if (!context.mainComponent) {
       throw new BadRequestException('Impossible de supprimer un composant: arbre vide.');
@@ -1322,7 +1415,7 @@ export class PersonService {
         const documentsResult = await tx.document.deleteMany({
           where: deletionPlan.documentsDeleteWhere,
         });
-        const personsResult = await tx.person.deleteMany({ where: { id: { in: targetIds } } });
+        const personsResult = await tx.person.deleteMany({ where: { treeId, id: { in: targetIds } } });
         return [documentsResult.count, personsResult.count] as const;
       },
       {
@@ -1331,9 +1424,9 @@ export class PersonService {
       },
     );
 
-    await this.ensureRootDefaultExists();
+    await this.ensureRootDefaultExists(treeId);
 
-    await this.appendRepairLogs([
+    await this.appendRepairLogs(treeId, [
       {
         id: this.makeEventId('remove-disconnected-component'),
         action: 'REMOVE_DISCONNECTED_COMPONENT',
@@ -1382,21 +1475,35 @@ export class PersonService {
     };
   }
 
-  private async buildIntegrityContext(): Promise<IntegrityContext> {
-    const [persons, relationships, unions] = await this.prisma.$transaction([
-      this.prisma.person.findMany({
-        select: {
-          id: true,
-          givenNames: true,
-          usageSurname: true,
-          birthSurname: true,
-          isRootDefault: true,
-          birthDate: true,
-          deathDate: true,
-          birthPlace: true,
+  private async buildIntegrityContext(treeId: string): Promise<IntegrityContext> {
+    const persons = await this.prisma.person.findMany({
+      where: { treeId },
+      select: {
+        id: true,
+        givenNames: true,
+        usageSurname: true,
+        birthSurname: true,
+        isRootDefault: true,
+        birthDate: true,
+        deathDate: true,
+        birthPlace: {
+          select: {
+            name: true,
+            subdivision: true,
+            region: true,
+            country: true,
+          },
         },
-      }),
+      },
+    });
+    const personIds = persons.map((person) => person.id);
+
+    const [relationships, unions] = await this.prisma.$transaction([
       this.prisma.relationship.findMany({
+        where: {
+          parentId: { in: personIds },
+          childId: { in: personIds },
+        },
         select: {
           id: true,
           parentId: true,
@@ -1405,6 +1512,7 @@ export class PersonService {
         },
       }),
       this.prisma.union.findMany({
+        where: { treeId },
         select: {
           id: true,
           partner1Id: true,
@@ -1431,7 +1539,7 @@ export class PersonService {
         birthSurname: person.birthSurname,
         birthDate: person.birthDate,
         deathDate: person.deathDate,
-        birthPlace: person.birthPlace,
+        birthPlace: this.formatPlace(person.birthPlace),
       });
       adjacency.set(person.id, new Set<string>());
     }
@@ -1594,6 +1702,81 @@ export class PersonService {
     return `${person.givenNames}${surname ? ` ${surname}` : ''}`.trim();
   }
 
+  private async assertTreeExists(treeId: string) {
+    const tree = await this.prisma.tree.findUnique({
+      where: { id: treeId },
+      select: { id: true },
+    });
+
+    if (!tree) {
+      throw new NotFoundException(`Tree with ID "${treeId}" not found`);
+    }
+  }
+
+  private async findOrCreatePlaceId(value?: string | null) {
+    const parsed = this.parsePlaceString(value);
+    if (!parsed) return null;
+
+    const existing = await this.prisma.place.findFirst({
+      where: {
+        name: parsed.name,
+        subdivision: parsed.subdivision,
+        region: parsed.region,
+        country: parsed.country,
+      },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+
+    const created = await this.prisma.place.create({
+      data: parsed,
+      select: { id: true },
+    });
+    return created.id;
+  }
+
+  private parsePlaceString(value?: string | null) {
+    const parts = (value || '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length === 0) return null;
+
+    return {
+      name: parts[0],
+      subdivision: parts.length >= 4 ? parts[1] : null,
+      region:
+        parts.length === 3
+          ? parts[1]
+          : parts.length >= 4
+          ? parts.slice(2, -1).join(', ')
+          : null,
+      country: parts.length >= 2 ? parts[parts.length - 1] : null,
+    };
+  }
+
+  private formatPlace(place: PlaceLike) {
+    if (!place) return null;
+    return [place.name, place.subdivision, place.region, place.country]
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  private serializePerson<T extends { birthPlace?: PlaceLike; deathPlace?: PlaceLike }>(
+    person: T,
+  ) {
+    return {
+      ...person,
+      birthPlace: this.formatPlace(person.birthPlace || null),
+      deathPlace: this.formatPlace(person.deathPlace || null),
+    };
+  }
+
+  private treeSettingKey(baseKey: string, treeId: string) {
+    return `${baseKey}:${treeId}`;
+  }
+
   private pickComponentRepresentative(
     personIds: string[],
     personById: Map<string, IntegrityPersonSummary>,
@@ -1613,8 +1796,8 @@ export class PersonService {
     return ordered[0];
   }
 
-  async getConnectivitySnapshot() {
-    const context = await this.buildIntegrityContext();
+  async getConnectivitySnapshot(treeId: string) {
+    const context = await this.buildIntegrityContext(treeId);
     const disconnectedComponents = context.mainComponent
       ? context.components.filter((component) => component.id !== context.mainComponent!.id)
       : [];
@@ -2055,11 +2238,12 @@ export class PersonService {
     });
   }
 
-  private async appendRepairLogs(entries: RepairLogEntry[]) {
+  private async appendRepairLogs(treeId: string, entries: RepairLogEntry[]) {
     if (entries.length === 0) return;
-    const current = await this.getJsonSetting<RepairLogEntry[]>(TREE_REPAIR_LOGS_KEY, []);
+    const key = this.treeSettingKey(TREE_REPAIR_LOGS_KEY, treeId);
+    const current = await this.getJsonSetting<RepairLogEntry[]>(key, []);
     const next = [...current, ...entries].slice(-MAX_REPAIR_LOGS);
-    await this.setJsonSetting(TREE_REPAIR_LOGS_KEY, next);
+    await this.setJsonSetting(key, next);
   }
 
   private async appendPersonHistory(entries: PersonHistoryEntry[]) {
@@ -2080,15 +2264,16 @@ export class PersonService {
     }
   }
 
-  private async ensureRootDefaultExists() {
+  private async ensureRootDefaultExists(treeId: string) {
     const rootDefault = await this.prisma.person.findFirst({
-      where: { isRootDefault: true },
+      where: { treeId, isRootDefault: true },
       select: { id: true },
     });
 
     if (rootDefault) return;
 
     const fallback = await this.prisma.person.findFirst({
+      where: { treeId },
       orderBy: { createdAt: 'asc' },
       select: { id: true },
     });
@@ -2101,18 +2286,22 @@ export class PersonService {
     }
   }
 
-  private async getDescendantIds(personId: string): Promise<string[]> {
+  private async getDescendantIds(treeId: string, personId: string): Promise<string[]> {
     const results = await this.prisma.$queryRaw<{ id: string }[]>`
       WITH RECURSIVE descendants AS (
-        SELECT child_id AS id
-        FROM relationships
-        WHERE parent_id = ${personId}::uuid
+        SELECT r.child_id AS id
+        FROM relationships r
+        INNER JOIN persons child ON child.id = r.child_id
+        WHERE r.parent_id = ${personId}::uuid
+          AND child.tree_id = ${treeId}::uuid
 
         UNION
 
         SELECT r.child_id AS id
         FROM relationships r
+        INNER JOIN persons child ON child.id = r.child_id
         INNER JOIN descendants d ON r.parent_id = d.id
+        WHERE child.tree_id = ${treeId}::uuid
       )
       SELECT DISTINCT id FROM descendants
     `;

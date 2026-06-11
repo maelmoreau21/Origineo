@@ -2,7 +2,7 @@
 // Search Controller
 // ══════════════════════════════════════
 
-import { Controller, Get, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { SearchService } from './search.service';
 
@@ -13,6 +13,7 @@ export class SearchController {
 
   @Get()
   @ApiOperation({ summary: 'Search persons by text and advanced filters (dates, place, gender)' })
+  @ApiQuery({ name: 'treeId', required: true, description: 'Tree UUID' })
   @ApiQuery({ name: 'q', required: false, description: 'Free text query (name, place, notes, professions)' })
   @ApiQuery({ name: 'place', required: false, description: 'Filter by birth/death place' })
   @ApiQuery({ name: 'gender', required: false, description: 'MALE | FEMALE | OTHER | UNKNOWN' })
@@ -23,6 +24,7 @@ export class SearchController {
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async search(
+    @Query('treeId') treeId: string,
     @Query('q') q?: string,
     @Query('place') place?: string,
     @Query('gender') gender?: string,
@@ -33,12 +35,16 @@ export class SearchController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
+    if (!treeId) {
+      throw new BadRequestException('treeId is required.');
+    }
     const parsedPage = this.parsePositiveInt(page, 1, 1_000_000);
     const parsedLimit = this.parsePositiveInt(limit, 20, 100);
 
     return {
       success: true,
       data: await this.searchService.search(
+        treeId,
         {
           q,
           place,

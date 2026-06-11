@@ -26,6 +26,10 @@ enum UnionEndReason {
 }
 
 export class CreateUnionDto {
+  @ApiProperty({ description: 'UUID of the tree this union belongs to' })
+  @IsUUID()
+  treeId: string;
+
   @ApiProperty({ description: 'UUID of partner 1' })
   @IsUUID()
   partner1Id: string;

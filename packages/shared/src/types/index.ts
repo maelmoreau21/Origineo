@@ -14,14 +14,17 @@ import {
 // ─── Person ─────────────────────────────────
 export interface PersonDto {
   id: string;
+  treeId?: string;
   usageSurname: string | null;
   birthSurname: string | null;
   givenNames: string;
   gender: Gender;
   birthDate: string | null;
   birthPlace: string | null;
+  birthPlaceId?: string | null;
   deathDate: string | null;
   deathPlace: string | null;
+  deathPlaceId?: string | null;
   professions: string[];
   notes: string | null;
   isRootDefault: boolean;
@@ -30,6 +33,7 @@ export interface PersonDto {
 }
 
 export interface CreatePersonDto {
+  treeId: string;
   usageSurname?: string | null;
   birthSurname?: string | null;
   givenNames: string;
@@ -63,6 +67,7 @@ export interface CreateRelationshipDto {
 // ─── Union ──────────────────────────────────
 export interface UnionDto {
   id: string;
+  treeId?: string;
   partner1Id: string;
   partner2Id: string;
   type: UnionType;
@@ -76,6 +81,7 @@ export interface UnionDto {
 }
 
 export interface CreateUnionDto {
+  treeId: string;
   partner1Id: string;
   partner2Id: string;
   type?: UnionType;
@@ -102,7 +108,27 @@ export interface DocumentDto {
 }
 
 // ─── Tree ───────────────────────────────────
+export interface TreeDto {
+  id: string;
+  title: string;
+  description: string | null;
+  ownerId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlaceDto {
+  id: string;
+  name: string;
+  subdivision: string | null;
+  region: string | null;
+  country: string | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
 export interface TreeQueryParams {
+  treeId: string;
   rootPersonId: string;
   ancestorGenerations?: number;
   descendantGenerations?: number;
@@ -177,6 +203,7 @@ export interface FamilyChartDatumDto {
 
 // ─── Search ─────────────────────────────────
 export interface SearchParams {
+  treeId: string;
   query: string;
   page?: number;
   limit?: number;
@@ -307,6 +334,7 @@ export type GedcomJobStatus =
 
 export interface GedcomJobDto {
   id: string;
+  treeId?: string;
   mode: 'IMPORT' | 'MERGE';
   status: GedcomJobStatus;
   filename: string;

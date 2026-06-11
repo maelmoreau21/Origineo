@@ -75,51 +75,109 @@ enum GedcomDecisionAction {
 
 // ─── Models ─────────────────────────────────
 
-model Person {
-  id            String    @id @default(uuid()) @db.Uuid
-  usageSurname  String?   @map("usage_surname")
-  birthSurname  String?   @map("birth_surname")
-  givenNames    String    @map("given_names")
-  gender        Gender    @default(UNKNOWN)
-  birthDate     DateTime? @map("birth_date") @db.Date
-  birthPlace    String?   @map("birth_place")
-  deathDate     DateTime? @map("death_date") @db.Date
-  deathPlace    String?   @map("death_place")
-  professions   String[]  @default([])
-  notes         String?   @db.Text
-  givenNamesNormalized   String? @map("given_names_normalized")
-  surnameNormalized      String? @map("surname_normalized")
-  primaryNameNormalized  String? @map("primary_name_normalized")
-  birthYear              Int?    @map("birth_year")
-  deathYear              Int?    @map("death_year")
-  // Nouveaux champs professionnels (Heredis-like)
-  nickname            String?
-  title               String?
-  baptismDate         DateTime? @map("baptism_date") @db.Date
-  baptismPlace        String?   @map("baptism_place")
-  burialDate          DateTime? @map("burial_date") @db.Date
-  burialPlace         String?   @map("burial_place")
-  deathCause          String?   @map("death_cause")
-  religion            String?
-  physicalDescription String?   @map("physical_description") @db.Text
-  nationality         String?
-  education           String?
-  residences          String[]  @default([])
+model Tree {
+  id          String  @id @default(uuid()) @db.Uuid
+  title       String
+  description String? @db.Text
+  ownerId     String? @map("owner_id") @db.Uuid
 
-  isRootDefault Boolean   @default(false) @map("is_root_default")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  // Relations
-  parentRelationships Relationship[] @relation("ParentRelation")
-  childRelationships  Relationship[] @relation("ChildRelation")
-  unionsAsPartner1    Union[]        @relation("Partner1")
-  unionsAsPartner2    Union[]        @relation("Partner2")
-  documents           Document[]
+  owner         User?          @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  persons       Person[]
+  unions        Union[]
+  events        Event[]
+  gedcomJobs    GedcomJob[]
+  repositories  Repository[]
+  sources       Source[]
+  citations     Citation[]
+  citationLinks CitationLink[]
 
+  @@index([ownerId])
+  @@map("trees")
+}
+
+model Place {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String
+  subdivision String?
+  region      String?
+  country     String?
+  latitude    Float?
+  longitude   Float?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  personsBorn Person[] @relation("PersonBirthPlace")
+  personsDied Person[] @relation("PersonDeathPlace")
+  events      Event[]
+
+  @@index([name])
+  @@index([region])
+  @@index([country])
+  @@map("places")
+}
+
+model Person {
+  id                    String    @id @default(uuid()) @db.Uuid
+  treeId                String    @map("tree_id") @db.Uuid
+  usageSurname          String?   @map("usage_surname")
+  birthSurname          String?   @map("birth_surname")
+  givenNames            String    @map("given_names")
+  gender                Gender    @default(UNKNOWN)
+  birthDate             DateTime? @map("birth_date") @db.Date
+  birthPlaceId          String?   @map("birth_place_id") @db.Uuid
+  deathDate             DateTime? @map("death_date") @db.Date
+  deathPlaceId          String?   @map("death_place_id") @db.Uuid
+  professions           String[]  @default([])
+  notes                 String?   @db.Text
+  givenNamesNormalized  String?   @map("given_names_normalized")
+  surnameNormalized     String?   @map("surname_normalized")
+  primaryNameNormalized String?   @map("primary_name_normalized")
+  birthYear             Int?      @map("birth_year")
+  deathYear             Int?      @map("death_year")
+  // Nouveaux champs professionnels (Heredis-like)
+  nickname              String?
+  title                 String?
+  baptismDate           DateTime? @map("baptism_date") @db.Date
+  baptismPlace          String?   @map("baptism_place")
+  burialDate            DateTime? @map("burial_date") @db.Date
+  burialPlace           String?   @map("burial_place")
+  deathCause            String?   @map("death_cause")
+  religion              String?
+  physicalDescription   String?   @map("physical_description") @db.Text
+  nationality           String?
+  education             String?
+  residences            String[]  @default([])
+
+  isRootDefault Boolean  @default(false) @map("is_root_default")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  tree                Tree               @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  birthPlace          Place?             @relation("PersonBirthPlace", fields: [birthPlaceId], references: [id], onDelete: SetNull)
+  deathPlace          Place?             @relation("PersonDeathPlace", fields: [deathPlaceId], references: [id], onDelete: SetNull)
+  parentRelationships Relationship[]     @relation("ParentRelation")
+  childRelationships  Relationship[]     @relation("ChildRelation")
+  unionsAsPartner1    Union[]            @relation("Partner1")
+  unionsAsPartner2    Union[]            @relation("Partner2")
+  documents           Document[]
+  eventParticipants   EventParticipant[]
+  citationLinks       CitationLink[]
+
+  @@index([treeId])
+  @@index([treeId, isRootDefault])
+  @@index([treeId, birthSurname])
+  @@index([treeId, usageSurname])
+  @@index([treeId, givenNames])
   @@index([birthSurname])
   @@index([usageSurname])
   @@index([givenNames])
+  @@index([birthPlaceId])
+  @@index([deathPlaceId])
   @@index([givenNamesNormalized])
   @@index([surnameNormalized])
   @@index([primaryNameNormalized])
@@ -148,6 +206,7 @@ model Relationship {
 
 model Union {
   id         String          @id @default(uuid()) @db.Uuid
+  treeId     String          @map("tree_id") @db.Uuid
   partner1Id String          @map("partner1_id") @db.Uuid
   partner2Id String          @map("partner2_id") @db.Uuid
   type       UnionType       @default(MARRIAGE)
@@ -160,13 +219,56 @@ model Union {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  partner1  Person     @relation("Partner1", fields: [partner1Id], references: [id], onDelete: Cascade)
-  partner2  Person     @relation("Partner2", fields: [partner2Id], references: [id], onDelete: Cascade)
-  documents Document[]
+  tree          Tree           @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  partner1      Person         @relation("Partner1", fields: [partner1Id], references: [id], onDelete: Cascade)
+  partner2      Person         @relation("Partner2", fields: [partner2Id], references: [id], onDelete: Cascade)
+  documents     Document[]
+  citationLinks CitationLink[]
 
+  @@index([treeId])
   @@index([partner1Id])
   @@index([partner2Id])
   @@map("unions")
+}
+
+model Event {
+  id      String    @id @default(uuid()) @db.Uuid
+  treeId  String    @map("tree_id") @db.Uuid
+  type    String
+  date    DateTime? @db.Date
+  dateRaw String?   @map("date_raw") @db.Text
+  notes   String?   @db.Text
+  placeId String?   @map("place_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tree         Tree               @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  place        Place?             @relation(fields: [placeId], references: [id], onDelete: SetNull)
+  participants EventParticipant[]
+
+  @@index([treeId])
+  @@index([placeId])
+  @@index([type])
+  @@index([date])
+  @@map("events")
+}
+
+model EventParticipant {
+  id       String @id @default(uuid()) @db.Uuid
+  eventId  String @map("event_id") @db.Uuid
+  personId String @map("person_id") @db.Uuid
+  role     String
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  event  Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, personId])
+  @@index([personId])
+  @@index([role])
+  @@map("event_participants")
 }
 
 model Document {
@@ -189,6 +291,86 @@ model Document {
   @@map("documents")
 }
 
+model Repository {
+  id     String  @id @default(uuid()) @db.Uuid
+  treeId String  @map("tree_id") @db.Uuid
+  name   String
+  type   String
+  url    String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tree    Tree     @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  sources Source[]
+
+  @@index([treeId])
+  @@index([treeId, name])
+  @@map("repositories")
+}
+
+model Source {
+  id           String  @id @default(uuid()) @db.Uuid
+  treeId       String  @map("tree_id") @db.Uuid
+  repositoryId String  @map("repository_id") @db.Uuid
+  title        String
+  text         String? @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tree       Tree       @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  citations  Citation[]
+
+  @@index([treeId])
+  @@index([repositoryId])
+  @@index([treeId, title])
+  @@map("sources")
+}
+
+model Citation {
+  id              String  @id @default(uuid()) @db.Uuid
+  treeId          String  @map("tree_id") @db.Uuid
+  sourceId        String  @map("source_id") @db.Uuid
+  page            String?
+  transcription   String? @db.Text
+  confidenceScore Int?    @map("confidence_score")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tree   Tree           @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  source Source         @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  links  CitationLink[]
+
+  @@index([treeId])
+  @@index([sourceId])
+  @@map("citations")
+}
+
+model CitationLink {
+  id         String  @id @default(uuid()) @db.Uuid
+  treeId     String  @map("tree_id") @db.Uuid
+  citationId String  @map("citation_id") @db.Uuid
+  personId   String? @map("person_id") @db.Uuid
+  unionId    String? @map("union_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tree     Tree     @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  citation Citation @relation(fields: [citationId], references: [id], onDelete: Cascade)
+  person   Person?  @relation(fields: [personId], references: [id], onDelete: Cascade)
+  union    Union?   @relation(fields: [unionId], references: [id], onDelete: Cascade)
+
+  @@unique([citationId, personId])
+  @@unique([citationId, unionId])
+  @@index([treeId])
+  @@index([personId])
+  @@index([unionId])
+  @@map("citation_links")
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
@@ -198,6 +380,8 @@ model User {
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+
+  trees Tree[]
 
   @@map("users")
 }
@@ -215,6 +399,7 @@ model SystemSetting {
 
 model GedcomJob {
   id             String          @id @default(uuid()) @db.Uuid
+  treeId         String          @map("tree_id") @db.Uuid
   mode           GedcomJobMode
   status         GedcomJobStatus @default(ANALYZING)
   filename       String
@@ -228,9 +413,11 @@ model GedcomJob {
   updatedAt      DateTime        @updatedAt @map("updated_at")
   completedAt    DateTime?       @map("completed_at")
 
-  stagedPersons GedcomStagedPerson[]
+  tree           Tree                 @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  stagedPersons  GedcomStagedPerson[]
   stagedFamilies GedcomStagedFamily[]
 
+  @@index([treeId])
   @@index([mode])
   @@index([status])
   @@index([createdAt])

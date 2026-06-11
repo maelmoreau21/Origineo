@@ -3,6 +3,8 @@
 // ══════════════════════════════════════
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const DEFAULT_TREE_ID =
+  process.env.NEXT_PUBLIC_TREE_ID || '00000000-0000-0000-0000-000000000001';
 
 interface FetchOptions extends RequestInit {
   token?: string;
@@ -52,68 +54,73 @@ async function apiFetch<T>(
   return response.json();
 }
 
+function appendTreeId(endpoint: string, treeId = DEFAULT_TREE_ID) {
+  const separator = endpoint.includes('?') ? '&' : '?';
+  return `${endpoint}${separator}treeId=${encodeURIComponent(treeId)}`;
+}
+
 // ─── Person API ──────────────────────────────
 export const personApi = {
-  getAll: (page = 1, limit = 20) =>
-    apiFetch<any>(`/persons?page=${page}&limit=${limit}`),
+  getAll: (page = 1, limit = 20, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(`/persons?page=${page}&limit=${limit}&treeId=${encodeURIComponent(treeId)}`),
 
-  getById: (id: string) =>
-    apiFetch<any>(`/persons/${id}`),
+  getById: (id: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/persons/${id}`, treeId)),
 
-  getRoot: () =>
-    apiFetch<any>('/persons/root'),
+  getRoot: (treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId('/persons/root', treeId)),
 
-  create: (data: any, token: string) =>
+  create: (data: any, token: string, treeId = DEFAULT_TREE_ID) =>
     apiFetch<any>('/persons', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, treeId: data.treeId || treeId }),
       token,
     }),
 
-  update: (id: string, data: any, token: string) =>
-    apiFetch<any>(`/persons/${id}`, {
+  update: (id: string, data: any, token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/persons/${id}`, treeId), {
       method: 'PATCH',
       body: JSON.stringify(data),
       token,
     }),
 
-  delete: (id: string, token: string) =>
-    apiFetch<any>(`/persons/${id}`, {
+  delete: (id: string, token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/persons/${id}`, treeId), {
       method: 'DELETE',
       token,
     }),
 
-  deleteBranch: (id: string, token: string, includeRoot = true, simulate = false) =>
-    apiFetch<any>(`/persons/${id}/branch?includeRoot=${includeRoot}&simulate=${simulate}`, {
+  deleteBranch: (id: string, token: string, includeRoot = true, simulate = false, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(`/persons/${id}/branch?includeRoot=${includeRoot}&simulate=${simulate}&treeId=${encodeURIComponent(treeId)}`, {
       method: 'DELETE',
       token,
     }),
 
-  deleteAll: (token: string) =>
-    apiFetch<any>('/persons?confirm=DELETE_ALL', {
+  deleteAll: (token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(`/persons?confirm=DELETE_ALL&treeId=${encodeURIComponent(treeId)}`, {
       method: 'DELETE',
       token,
     }),
 
-  getIntegrityReport: (token: string) =>
-    apiFetch<any>('/persons/integrity/report', {
+  getIntegrityReport: (token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId('/persons/integrity/report', treeId), {
       token,
     }),
 
-  repairRootDefault: (token: string) =>
-    apiFetch<any>('/persons/integrity/repair-root', {
+  repairRootDefault: (token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId('/persons/integrity/repair-root', treeId), {
       method: 'POST',
       token,
     }),
 
-  repairRootDefaultWithOptions: (token: string, simulate = false) =>
-    apiFetch<any>(`/persons/integrity/repair-root${simulate ? '?simulate=true' : ''}`, {
+  repairRootDefaultWithOptions: (token: string, simulate = false, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(`/persons/integrity/repair-root?treeId=${encodeURIComponent(treeId)}${simulate ? '&simulate=true' : ''}`, {
       method: 'POST',
       token,
     }),
 
-  getQualityRules: (token: string) =>
-    apiFetch<any>('/persons/integrity/rules', {
+  getQualityRules: (token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId('/persons/integrity/rules', treeId), {
       token,
     }),
 
@@ -125,20 +132,21 @@ export const personApi = {
       maxLifespanYears?: number;
     },
     token: string,
+    treeId = DEFAULT_TREE_ID,
   ) =>
-    apiFetch<any>('/persons/integrity/rules', {
+    apiFetch<any>(appendTreeId('/persons/integrity/rules', treeId), {
       method: 'POST',
       body: JSON.stringify(data),
       token,
     }),
 
-  getRepairLogs: (token: string, limit = 40) =>
-    apiFetch<any>(`/persons/integrity/logs?limit=${limit}`, {
+  getRepairLogs: (token: string, limit = 40, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(`/persons/integrity/logs?limit=${limit}&treeId=${encodeURIComponent(treeId)}`, {
       token,
     }),
 
-  undoRepairLog: (logId: string, token: string, simulate = false) =>
-    apiFetch<any>(`/persons/integrity/logs/${logId}/undo${simulate ? '?simulate=true' : ''}`, {
+  undoRepairLog: (logId: string, token: string, simulate = false, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(`/persons/integrity/logs/${logId}/undo?treeId=${encodeURIComponent(treeId)}${simulate ? '&simulate=true' : ''}`, {
       method: 'POST',
       token,
     }),
@@ -153,24 +161,25 @@ export const personApi = {
       simulate?: boolean;
     },
     token: string,
+    treeId = DEFAULT_TREE_ID,
   ) =>
-    apiFetch<any>('/persons/integrity/connect', {
+    apiFetch<any>(appendTreeId('/persons/integrity/connect', treeId), {
       method: 'POST',
       body: JSON.stringify(data),
       token,
     }),
 
-  deleteDisconnectedComponent: (personId: string, token: string, simulate = false) =>
+  deleteDisconnectedComponent: (personId: string, token: string, simulate = false, treeId = DEFAULT_TREE_ID) =>
     apiFetch<any>(
-      `/persons/integrity/component/${personId}?confirm=DELETE_COMPONENT${simulate ? '&simulate=true' : ''}`,
+      `/persons/integrity/component/${personId}?confirm=DELETE_COMPONENT&treeId=${encodeURIComponent(treeId)}${simulate ? '&simulate=true' : ''}`,
       {
       method: 'DELETE',
       token,
       },
     ),
 
-  getHistory: (personId: string, limit = 120, token?: string) =>
-    apiFetch<any>(`/persons/${personId}/history?limit=${limit}`, {
+  getHistory: (personId: string, limit = 120, token?: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(`/persons/${personId}/history?limit=${limit}&treeId=${encodeURIComponent(treeId)}`, {
       token,
     }),
 };
@@ -182,8 +191,10 @@ export const treeApi = {
     ancestors = 4,
     descendants = 2,
     options: { siblings?: boolean; spouses?: boolean; limit?: number } = {},
+    treeId = DEFAULT_TREE_ID,
   ) => {
     const params = new URLSearchParams({
+      treeId,
       ancestors: String(ancestors),
       descendants: String(descendants),
       siblings: String(options.siblings ?? true),
@@ -195,8 +206,8 @@ export const treeApi = {
     );
   },
 
-  getRelationshipPath: (personAId: string, personBId: string) =>
-    apiFetch<any>(`/tree/relationship/${personAId}/${personBId}`),
+  getRelationshipPath: (personAId: string, personBId: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/tree/relationship/${personAId}/${personBId}`, treeId)),
 };
 
 // ─── Search API ──────────────────────────────
@@ -211,12 +222,13 @@ type SearchFilters = {
 };
 
 export const searchApi = {
-  search: (queryOrFilters: string | SearchFilters, page = 1, limit = 20) => {
+  search: (queryOrFilters: string | SearchFilters, page = 1, limit = 20, treeId = DEFAULT_TREE_ID) => {
     if (typeof queryOrFilters === 'string') {
-      return apiFetch<any>(`/search?q=${encodeURIComponent(queryOrFilters)}&page=${page}&limit=${limit}`);
+      return apiFetch<any>(`/search?q=${encodeURIComponent(queryOrFilters)}&page=${page}&limit=${limit}&treeId=${encodeURIComponent(treeId)}`);
     }
 
     const params = new URLSearchParams();
+    params.set('treeId', treeId);
     if (queryOrFilters.q?.trim()) params.set('q', queryOrFilters.q.trim());
     if (queryOrFilters.place?.trim()) params.set('place', queryOrFilters.place.trim());
     if (queryOrFilters.gender) params.set('gender', queryOrFilters.gender);
@@ -255,28 +267,28 @@ export const relationshipApi = {
 
 // ─── Union API ───────────────────────────────
 export const unionApi = {
-  getAll: (page = 1, limit = 100) =>
-    apiFetch<any>(`/unions?page=${page}&limit=${limit}`),
+  getAll: (page = 1, limit = 100, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(`/unions?page=${page}&limit=${limit}&treeId=${encodeURIComponent(treeId)}`),
 
-  create: (data: any, token: string) =>
+  create: (data: any, token: string, treeId = DEFAULT_TREE_ID) =>
     apiFetch<any>('/unions', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, treeId: data.treeId || treeId }),
       token,
     }),
 
-  getByPerson: (personId: string) =>
-    apiFetch<any>(`/unions/person/${personId}`),
+  getByPerson: (personId: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/unions/person/${personId}`, treeId)),
 
-  update: (id: string, data: any, token: string) =>
-    apiFetch<any>(`/unions/${id}`, {
+  update: (id: string, data: any, token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/unions/${id}`, treeId), {
       method: 'PATCH',
       body: JSON.stringify(data),
       token,
     }),
 
-  delete: (id: string, token: string) =>
-    apiFetch<any>(`/unions/${id}`, {
+  delete: (id: string, token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/unions/${id}`, treeId), {
       method: 'DELETE',
       token,
     }),
@@ -344,11 +356,11 @@ export const authApi = {
 
 // ─── GEDCOM API ──────────────────────────────
 export const gedcomApi = {
-  import: async (file: File, token: string) => {
+  import: async (file: File, token: string, treeId = DEFAULT_TREE_ID) => {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE}/api/gedcom/import`, {
+    const response = await fetch(`${API_BASE}/api/gedcom/import?treeId=${encodeURIComponent(treeId)}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: formData,
@@ -362,18 +374,19 @@ export const gedcomApi = {
     return response.json();
   },
 
-  exportUrl: (rootPersonId?: string, maxGenerations?: number) => {
+  exportUrl: (rootPersonId?: string, maxGenerations?: number, treeId = DEFAULT_TREE_ID) => {
     let url = `${API_BASE}/api/gedcom/export`;
     const params = new URLSearchParams();
+    params.set('treeId', treeId);
     if (rootPersonId) params.set('rootPersonId', rootPersonId);
     if (maxGenerations) params.set('maxGenerations', String(maxGenerations));
     const qs = params.toString();
     return qs ? `${url}?${qs}` : url;
   },
 
-  exportFile: async (token: string, rootPersonId?: string, maxGenerations?: number) => {
+  exportFile: async (token: string, rootPersonId?: string, maxGenerations?: number, treeId = DEFAULT_TREE_ID) => {
     const response = await fetch(
-      gedcomApi.exportUrl(rootPersonId, maxGenerations),
+      gedcomApi.exportUrl(rootPersonId, maxGenerations, treeId),
       {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
@@ -393,11 +406,11 @@ export const gedcomApi = {
     return { blob, filename };
   },
 
-  mergeAnalyze: async (file: File, token: string) => {
+  mergeAnalyze: async (file: File, token: string, treeId = DEFAULT_TREE_ID) => {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE}/api/gedcom/merge/analyze`, {
+    const response = await fetch(`${API_BASE}/api/gedcom/merge/analyze?treeId=${encodeURIComponent(treeId)}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: formData,
@@ -418,11 +431,11 @@ export const gedcomApi = {
       token,
     }),
 
-  createJob: async (file: File, mode: 'import' | 'merge', token: string) => {
+  createJob: async (file: File, mode: 'import' | 'merge', token: string, treeId = DEFAULT_TREE_ID) => {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE}/api/gedcom/jobs?mode=${mode}`, {
+    const response = await fetch(`${API_BASE}/api/gedcom/jobs?mode=${mode}&treeId=${encodeURIComponent(treeId)}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: formData,
@@ -436,16 +449,16 @@ export const gedcomApi = {
     return response.json();
   },
 
-  getJob: (jobId: string, token: string) =>
-    apiFetch<any>(`/gedcom/jobs/${jobId}`, { token }),
+  getJob: (jobId: string, token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/gedcom/jobs/${jobId}`, treeId), { token }),
 
-  getJobCandidates: (jobId: string, token: string, page = 1, limit = 25) =>
-    apiFetch<any>(`/gedcom/jobs/${jobId}/candidates?page=${page}&limit=${limit}`, {
+  getJobCandidates: (jobId: string, token: string, page = 1, limit = 25, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(`/gedcom/jobs/${jobId}/candidates?page=${page}&limit=${limit}&treeId=${encodeURIComponent(treeId)}`, {
       token,
     }),
 
-  applyJob: (jobId: string, decisions: any[], token: string) =>
-    apiFetch<any>(`/gedcom/jobs/${jobId}/apply`, {
+  applyJob: (jobId: string, decisions: any[], token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/gedcom/jobs/${jobId}/apply`, treeId), {
       method: 'POST',
       body: JSON.stringify({ decisions }),
       token,

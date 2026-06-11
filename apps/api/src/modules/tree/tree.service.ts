@@ -7,19 +7,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 interface TreePerson {
   id: string;
-  usage_surname: string | null;
-  birth_surname: string | null;
-  given_names: string;
-  gender: string;
-  birth_date: Date | null;
-  birth_place: string | null;
-  death_date: Date | null;
-  death_place: string | null;
-  professions: string[];
-  notes: string | null;
-  is_root_default: boolean;
   generation: number;
 }
+
+type PlaceLike = {
+  name: string;
+  subdivision: string | null;
+  region: string | null;
+  country: string | null;
+} | null;
 
 interface TreeWindowOptions {
   includeSiblings?: boolean;
@@ -36,6 +32,7 @@ export class TreeService {
    * Uses recursive CTEs for efficient multi-generation queries.
    */
   async getTree(
+    treeId: string,
     rootPersonId: string,
     ancestorGenerations = 4,
     descendantGenerations = 2,
@@ -46,8 +43,8 @@ export class TreeService {
     const limit = Math.max(25, Math.min(5000, Math.floor(options.limit || 1200)));
 
     // Verify root person exists
-    const rootPerson = await this.prisma.person.findUnique({
-      where: { id: rootPersonId },
+    const rootPerson = await this.prisma.person.findFirst({
+      where: { id: rootPersonId, treeId },
     });
 
     if (!rootPerson) {
@@ -57,10 +54,10 @@ export class TreeService {
     }
 
     // Fetch ancestors via recursive CTE
-    const ancestors = await this.getAncestors(rootPersonId, ancestorGenerations);
+    const ancestors = await this.getAncestors(treeId, rootPersonId, ancestorGenerations);
 
     // Fetch descendants via recursive CTE
-    const descendants = await this.getDescendants(rootPersonId, descendantGenerations);
+    const descendants = await this.getDescendants(treeId, rootPersonId, descendantGenerations);
 
     // Collect all unique person IDs
     const allPersonIds = new Set<string>();
@@ -72,7 +69,10 @@ export class TreeService {
     const rootParents = ancestors.filter(a => a.generation === 1).map(a => a.id);
     if (includeSiblings && rootParents.length > 0) {
       const siblingRels = await this.prisma.relationship.findMany({
-        where: { parentId: { in: rootParents } },
+        where: {
+          parentId: { in: rootParents },
+          child: { is: { treeId } },
+        },
         select: { childId: true },
       });
       siblingRels.forEach(r => allPersonIds.add(r.childId));
@@ -84,6 +84,7 @@ export class TreeService {
     const initialUnions = includeSpouses
       ? await this.prisma.union.findMany({
           where: {
+            treeId,
             OR: [
               { partner1Id: { in: personIds } },
               { partner2Id: { in: personIds } },
@@ -100,17 +101,30 @@ export class TreeService {
     // Also include co-parents of any child in the tree
     if (includeSpouses) {
       const childRelationships = await this.prisma.relationship.findMany({
-        where: { childId: { in: personIds } },
+        where: {
+          childId: { in: personIds },
+          parent: { is: { treeId } },
+        },
       });
       childRelationships.forEach((r) => allPersonIds.add(r.parentId));
     }
 
     const collectedPersonIds = Array.from(allPersonIds);
-    const updatedPersonIds = this.applyWindowLimit(
+    const limitedPersonIds = this.applyWindowLimit(
       rootPersonId,
       collectedPersonIds,
       limit,
     );
+
+    // Fetch full person records and re-apply the tree guard before loading edges.
+    const persons = await this.prisma.person.findMany({
+      where: { treeId, id: { in: limitedPersonIds } },
+      include: {
+        birthPlace: true,
+        deathPlace: true,
+      },
+    });
+    const updatedPersonIds = persons.map((person) => person.id);
     const visiblePersonIds = new Set(updatedPersonIds);
 
     // Fetch all relationships between the updated person set
@@ -126,16 +140,12 @@ export class TreeService {
     // Fetch all unions between the updated person set
     const unions = await this.prisma.union.findMany({
       where: {
+        treeId,
         AND: [
           { partner1Id: { in: updatedPersonIds } },
           { partner2Id: { in: updatedPersonIds } },
         ],
       },
-    });
-
-    // Fetch full person records
-    const persons = await this.prisma.person.findMany({
-      where: { id: { in: updatedPersonIds } },
     });
 
     const unionsByPerson = new Map<string, (typeof unions)[number][]>();
@@ -170,7 +180,7 @@ export class TreeService {
     // Build nodes
     const nodes = persons.map((person) => {
       return {
-        person,
+        person: this.serializePerson(person),
         generation: generationMap.get(person.id) || 0,
         unions: unionsByPerson.get(person.id) || [],
         parents: parentsByChild.get(person.id) || [],
@@ -222,6 +232,7 @@ export class TreeService {
    * Recursive CTE to fetch ancestors up to N generations.
    */
   private async getAncestors(
+    treeId: string,
     personId: string,
     maxGenerations: number,
   ): Promise<TreePerson[]> {
@@ -229,18 +240,20 @@ export class TreeService {
 
     const results = await this.prisma.$queryRaw<TreePerson[]>`
       WITH RECURSIVE ancestors AS (
-        SELECT p.*, 1 AS generation
+        SELECT p.id, 1 AS generation
         FROM persons p
         INNER JOIN relationships r ON r.parent_id = p.id
         WHERE r.child_id = ${personId}::uuid
+          AND p.tree_id = ${treeId}::uuid
 
         UNION ALL
 
-        SELECT p.*, a.generation + 1
+        SELECT p.id, a.generation + 1
         FROM persons p
         INNER JOIN relationships r ON r.parent_id = p.id
         INNER JOIN ancestors a ON r.child_id = a.id
         WHERE a.generation < ${maxGenerations}
+          AND p.tree_id = ${treeId}::uuid
       )
       SELECT DISTINCT ON (id) * FROM ancestors ORDER BY id, generation
     `;
@@ -252,6 +265,7 @@ export class TreeService {
    * Recursive CTE to fetch descendants up to N generations.
    */
   private async getDescendants(
+    treeId: string,
     personId: string,
     maxGenerations: number,
   ): Promise<TreePerson[]> {
@@ -259,18 +273,20 @@ export class TreeService {
 
     const results = await this.prisma.$queryRaw<TreePerson[]>`
       WITH RECURSIVE descendants AS (
-        SELECT p.*, 1 AS generation
+        SELECT p.id, 1 AS generation
         FROM persons p
         INNER JOIN relationships r ON r.child_id = p.id
         WHERE r.parent_id = ${personId}::uuid
+          AND p.tree_id = ${treeId}::uuid
 
         UNION ALL
 
-        SELECT p.*, d.generation + 1
+        SELECT p.id, d.generation + 1
         FROM persons p
         INNER JOIN relationships r ON r.child_id = p.id
         INNER JOIN descendants d ON r.parent_id = d.id
         WHERE d.generation < ${maxGenerations}
+          AND p.tree_id = ${treeId}::uuid
       )
       SELECT DISTINCT ON (id) * FROM descendants ORDER BY id, generation
     `;
@@ -282,11 +298,11 @@ export class TreeService {
    * Calculate the relationship path between two persons.
    * Uses bidirectional BFS to find the shortest path.
    */
-  async getRelationshipPath(personAId: string, personBId: string) {
+  async getRelationshipPath(treeId: string, personAId: string, personBId: string) {
     // Verify both persons exist
     const [personA, personB] = await Promise.all([
-      this.prisma.person.findUnique({ where: { id: personAId } }),
-      this.prisma.person.findUnique({ where: { id: personBId } }),
+      this.prisma.person.findFirst({ where: { id: personAId, treeId } }),
+      this.prisma.person.findFirst({ where: { id: personBId, treeId } }),
     ]);
 
     if (!personA) throw new NotFoundException(`Person A not found`);
@@ -315,28 +331,36 @@ export class TreeService {
 
         // Fetch all persons in path
         const pathPersons = await this.prisma.person.findMany({
-          where: { id: { in: path } },
+          where: { treeId, id: { in: path } },
+          include: {
+            birthPlace: true,
+            deathPlace: true,
+          },
         });
 
         return {
           found: true,
           distance: currentDist,
-          path: path.map((pid) => pathPersons.find((p) => p.id === pid)),
+          path: path.map((pid) => {
+            const person = pathPersons.find((p) => p.id === pid);
+            return person ? this.serializePerson(person) : null;
+          }),
         };
       }
 
       // Get all connected persons (parents + children + partners)
       const [parentRels, childRels, unionRels] = await Promise.all([
         this.prisma.relationship.findMany({
-          where: { childId: currentId },
+          where: { childId: currentId, parent: { is: { treeId } } },
           select: { parentId: true },
         }),
         this.prisma.relationship.findMany({
-          where: { parentId: currentId },
+          where: { parentId: currentId, child: { is: { treeId } } },
           select: { childId: true },
         }),
         this.prisma.union.findMany({
           where: {
+            treeId,
             OR: [{ partner1Id: currentId }, { partner2Id: currentId }],
           },
           select: { partner1Id: true, partner2Id: true },
@@ -363,5 +387,22 @@ export class TreeService {
     }
 
     return { found: false, distance: -1, path: [] };
+  }
+
+  private serializePerson<T extends { birthPlace?: PlaceLike; deathPlace?: PlaceLike }>(
+    person: T,
+  ) {
+    return {
+      ...person,
+      birthPlace: this.formatPlace(person.birthPlace || null),
+      deathPlace: this.formatPlace(person.deathPlace || null),
+    };
+  }
+
+  private formatPlace(place: PlaceLike) {
+    if (!place) return null;
+    return [place.name, place.subdivision, place.region, place.country]
+      .filter(Boolean)
+      .join(', ');
   }
 }

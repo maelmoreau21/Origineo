@@ -38,7 +38,7 @@ export class SearchService {
    * - Text query uses pg_trgm + ILIKE fuzzy matching
    * - Optional filters: place, gender, birth/death date ranges
    */
-  async search(filters: SearchFilters, page = 1, limit = 20) {
+  async search(treeId: string, filters: SearchFilters, page = 1, limit = 20) {
     const safePage = Number.isFinite(page)
       ? Math.max(1, Math.floor(page))
       : 1;
@@ -80,7 +80,9 @@ export class SearchService {
       return { persons: [], total: 0, page: safePage, limit: safeLimit };
     }
 
-    const conditions: Prisma.Sql[] = [];
+    const birthPlaceSql = Prisma.sql`concat_ws(', ', bp.name, bp.subdivision, bp.region, bp.country)`;
+    const deathPlaceSql = Prisma.sql`concat_ws(', ', dp.name, dp.subdivision, dp.region, dp.country)`;
+    const conditions: Prisma.Sql[] = [Prisma.sql`p.tree_id = ${treeId}::uuid`];
 
     if (searchTerm) {
       const likePattern = `%${searchTerm}%`;
@@ -99,13 +101,19 @@ export class SearchService {
           p.given_names % ${searchTerm}
           OR p.birth_surname % ${searchTerm}
           OR p.usage_surname % ${searchTerm}
-          OR p.birth_place % ${searchTerm}
-          OR p.death_place % ${searchTerm}
+          OR bp.name % ${searchTerm}
+          OR bp.subdivision % ${searchTerm}
+          OR bp.region % ${searchTerm}
+          OR bp.country % ${searchTerm}
+          OR dp.name % ${searchTerm}
+          OR dp.subdivision % ${searchTerm}
+          OR dp.region % ${searchTerm}
+          OR dp.country % ${searchTerm}
           OR p.given_names ILIKE ${likePattern}
           OR p.birth_surname ILIKE ${likePattern}
           OR p.usage_surname ILIKE ${likePattern}
-          OR p.birth_place ILIKE ${likePattern}
-          OR p.death_place ILIKE ${likePattern}
+          OR ${birthPlaceSql} ILIKE ${likePattern}
+          OR ${deathPlaceSql} ILIKE ${likePattern}
           OR p.notes ILIKE ${likePattern}
           OR EXISTS (
             SELECT 1
@@ -120,8 +128,8 @@ export class SearchService {
       const placePattern = `%${place}%`;
       conditions.push(
         Prisma.sql`(
-          p.birth_place ILIKE ${placePattern}
-          OR p.death_place ILIKE ${placePattern}
+          ${birthPlaceSql} ILIKE ${placePattern}
+          OR ${deathPlaceSql} ILIKE ${placePattern}
         )`,
       );
     }
@@ -159,8 +167,8 @@ export class SearchService {
           COALESCE(similarity(p.given_names, ${searchTerm}), 0),
           COALESCE(similarity(p.birth_surname, ${searchTerm}), 0),
           COALESCE(similarity(p.usage_surname, ${searchTerm}), 0),
-          COALESCE(similarity(p.birth_place, ${searchTerm}), 0),
-          COALESCE(similarity(p.death_place, ${searchTerm}), 0)
+          COALESCE(similarity(${birthPlaceSql}, ${searchTerm}), 0),
+          COALESCE(similarity(${deathPlaceSql}, ${searchTerm}), 0)
         )
       `
       : Prisma.sql`0::double precision`;
@@ -172,8 +180,12 @@ export class SearchService {
     const results = await this.prisma.$queryRaw<SearchResult[]>(Prisma.sql`
       SELECT
         p.*,
+        CASE WHEN bp.id IS NULL THEN NULL ELSE ${birthPlaceSql} END AS birth_place,
+        CASE WHEN dp.id IS NULL THEN NULL ELSE ${deathPlaceSql} END AS death_place,
         ${similarityExpression} AS similarity
       FROM persons p
+      LEFT JOIN places bp ON bp.id = p.birth_place_id
+      LEFT JOIN places dp ON dp.id = p.death_place_id
       ${whereClause}
       ${orderByClause}
       LIMIT ${safeLimit}
@@ -183,6 +195,8 @@ export class SearchService {
     const countResult = await this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
       SELECT COUNT(*) as count
       FROM persons p
+      LEFT JOIN places bp ON bp.id = p.birth_place_id
+      LEFT JOIN places dp ON dp.id = p.death_place_id
       ${whereClause}
     `);
 
