@@ -10,6 +10,7 @@ export type Person = {
   deathPlace?: string | null;
   professions?: string[];
   notes?: string | null;
+  sosaNumber?: number | null;
 };
 
 export type TreeWindow = {

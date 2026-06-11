@@ -1,8 +1,10 @@
 'use client';
 
 import {
-  ChangeEvent,
-  FormEvent,
+  type ChangeEvent,
+  type DragEvent,
+  type FormEvent,
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -12,22 +14,26 @@ import {
   documentApi,
   eventApi,
   personApi,
-  relationshipApi,
   sourceApi,
   unionApi,
 } from '@/lib/api';
+import {
+  type TreeWorkspaceMode,
+  useTreeWorkspaceMode,
+} from './TreeWorkspaceContext';
 import styles from './TreeWorkspace.module.css';
 import { formatLife, Person, personLabel, TreeWindow } from './types';
 
-type ActionMode = 'parent' | 'child' | 'spouse';
 type InspectorTab = 'timeline' | 'sources';
 
 type Props = {
   tree: TreeWindow | null;
   selectedPersonId: string | null;
   token: string | null;
+  mode?: TreeWorkspaceMode;
   onSaved: (personId?: string) => void;
   onRootChange: (personId: string) => void;
+  onRequestAddRelative?: (personId: string) => void;
   onRequestDeleteBranch: (person: Person) => void;
 };
 
@@ -138,10 +144,16 @@ export default function PersonInspector({
   tree,
   selectedPersonId,
   token,
+  mode: modeOverride,
   onSaved,
   onRootChange,
+  onRequestAddRelative,
   onRequestDeleteBranch,
 }: Props) {
+  const { mode: contextMode } = useTreeWorkspaceMode();
+  const mode = modeOverride ?? contextMode;
+  const isConsultation = mode === 'consultation';
+  const canMutate = Boolean(token) && !isConsultation;
   const selectedNode = useMemo(
     () => tree?.nodes.find((node) => node.person.id === selectedPersonId),
     [tree, selectedPersonId],
@@ -165,12 +177,6 @@ export default function PersonInspector({
     deathDate: '',
     deathPlace: '',
     notes: '',
-  });
-  const [actionMode, setActionMode] = useState<ActionMode | null>(null);
-  const [newPerson, setNewPerson] = useState({
-    givenNames: '',
-    usageSurname: '',
-    gender: 'UNKNOWN',
   });
   const [busy, setBusy] = useState(false);
 
@@ -209,73 +215,33 @@ export default function PersonInspector({
     }
   }
 
-  async function createRelative(event: FormEvent) {
-    event.preventDefault();
-    if (!token || !selected || !actionMode || !newPerson.givenNames.trim()) return;
-    setBusy(true);
-    try {
-      const createdEnvelope = await personApi.create(
-        {
-          givenNames: newPerson.givenNames.trim(),
-          usageSurname: newPerson.usageSurname.trim() || null,
-          birthSurname: newPerson.usageSurname.trim() || null,
-          gender: newPerson.gender,
-        },
-        token,
-      );
-      const created = createdEnvelope.data || createdEnvelope;
-
-      if (actionMode === 'parent') {
-        await relationshipApi.create(
-          { parentId: created.id, childId: selected.id, type: 'BIOLOGICAL' },
-          token,
-        );
-      } else if (actionMode === 'child') {
-        await relationshipApi.create(
-          { parentId: selected.id, childId: created.id, type: 'BIOLOGICAL' },
-          token,
-        );
-      } else {
-        await unionApi.create(
-          { partner1Id: selected.id, partner2Id: created.id, type: 'MARRIAGE' },
-          token,
-        );
-      }
-
-      setNewPerson({ givenNames: '', usageSurname: '', gender: 'UNKNOWN' });
-      setActionMode(null);
-      onSaved(created.id);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <aside className={styles.inspector}>
-      <section className={`${styles.panel} ${styles.summaryPanel}`}>
-        <div className={styles.panelEyebrow}>Personne selectionnee</div>
-        <div className={styles.personSummaryName}>{personLabel(selected)}</div>
-        <div className={styles.personSummaryLife}>
-          {formatLife(selected) || 'Dates inconnues'}
-        </div>
-        <div className={styles.essentialGrid}>
-          <InfoLine label="Naissance" value={formatEvent(selected.birthDate, selected.birthPlace)} />
-          <InfoLine label="Deces" value={formatEvent(selected.deathDate, selected.deathPlace)} />
-          <InfoLine label="Nom d'usage" value={selected.usageSurname || null} />
-          <InfoLine label="Nom de naissance" value={selected.birthSurname || null} />
-        </div>
-        <div className={styles.summaryCounts}>
-          <span className={styles.tag}>
-            {selectedNode.parents.length || 0} parents
-          </span>
-          <span className={styles.tag}>
-            {selectedNode.children.length || 0} enfants
-          </span>
-          <span className={styles.tag}>
-            {selectedNode.unions.length || 0} unions
+      <section className={`${styles.inspectorPanel} ${styles.inspectorHero}`}>
+        <div className={styles.inspectorHeroTop}>
+          <div className={styles.inspectorHeroIdentity}>
+            <div className={styles.panelEyebrow}>Personne selectionnee</div>
+            <h2 className={styles.personSummaryName}>{personLabel(selected)}</h2>
+            <div className={styles.personSummaryLife}>
+              {formatLife(selected) || 'Dates inconnues'}
+            </div>
+          </div>
+          <span
+            className={`${styles.modeBadge} ${
+              isConsultation ? styles.modeBadgeReadOnly : styles.modeBadgeEdit
+            }`}
+          >
+            {isConsultation ? 'Consultation' : 'Modification'}
           </span>
         </div>
-        <div className={styles.actionRow}>
+
+        <div className={styles.inspectorMetrics}>
+          <MetricCard label="Parents" value={selectedNode.parents.length} />
+          <MetricCard label="Enfants" value={selectedNode.children.length} />
+          <MetricCard label="Unions" value={unionGroups.length} />
+        </div>
+
+        <div className={styles.inspectorActions}>
           <button
             type="button"
             className={styles.button}
@@ -289,154 +255,49 @@ export default function PersonInspector({
         </div>
       </section>
 
-      <DataQualityPanel
-        warnings={integrityWarnings}
-        groups={unionGroups}
-        selectedPersonId={selected.id}
-        token={token}
-        onSaved={onSaved}
-      />
+      <InspectorAccordion
+        index="01"
+        title="Identite & infos vitales"
+        subtitle="Sosa, dates et lieux normalises"
+        defaultOpen
+      >
+        <IdentityVitals person={selected} node={selectedNode} />
 
-      <UnionChildrenPanel groups={unionGroups} token={token} />
-
-      <PersonFactsTabs person={selected} token={token} onSaved={onSaved} />
-
-      <section className={styles.panel}>
-        <EntityDocumentsPanel
-          entityId={selected.id}
-          ownerType="person"
-          title="Documents personne"
-          subtitle="Fichiers rattaches a cette personne."
-          token={token}
-          defaultCategory="OTHER"
-        />
-      </section>
-
-      <section className={styles.panel}>
-        <div className={styles.panelTitle}>Fiche</div>
-        <form className={styles.fieldGrid} onSubmit={savePerson}>
-          <label className={styles.label}>
-            Prenoms
-            <input
-              className={styles.input}
-              value={form.givenNames}
-              onChange={(event) => setForm({ ...form, givenNames: event.target.value })}
-            />
-          </label>
-          <label className={styles.label}>
-            Nom d'usage
-            <input
-              className={styles.input}
-              value={form.usageSurname}
-              onChange={(event) => setForm({ ...form, usageSurname: event.target.value })}
-            />
-          </label>
-          <label className={styles.label}>
-            Nom de naissance
-            <input
-              className={styles.input}
-              value={form.birthSurname}
-              onChange={(event) => setForm({ ...form, birthSurname: event.target.value })}
-            />
-          </label>
-          <label className={styles.label}>
-            Genre
-            <select
-              className={styles.select}
-              value={form.gender}
-              onChange={(event) => setForm({ ...form, gender: event.target.value })}
-            >
-              <option value="UNKNOWN">Inconnu</option>
-              <option value="MALE">Homme</option>
-              <option value="FEMALE">Femme</option>
-              <option value="OTHER">Autre</option>
-            </select>
-          </label>
-          <label className={styles.label}>
-            Naissance
-            <input
-              className={styles.input}
-              type="date"
-              value={form.birthDate}
-              onChange={(event) => setForm({ ...form, birthDate: event.target.value })}
-            />
-          </label>
-          <label className={styles.label}>
-            Lieu de naissance
-            <input
-              className={styles.input}
-              value={form.birthPlace}
-              onChange={(event) => setForm({ ...form, birthPlace: event.target.value })}
-            />
-          </label>
-          <label className={styles.label}>
-            Deces
-            <input
-              className={styles.input}
-              type="date"
-              value={form.deathDate}
-              onChange={(event) => setForm({ ...form, deathDate: event.target.value })}
-            />
-          </label>
-          <label className={styles.label}>
-            Notes
-            <textarea
-              className={styles.textarea}
-              value={form.notes}
-              onChange={(event) => setForm({ ...form, notes: event.target.value })}
-            />
-          </label>
-          <button className={`${styles.button} ${styles.primaryButton}`} disabled={!token || busy}>
-            Enregistrer
-          </button>
-        </form>
-      </section>
-
-      <section className={styles.panel}>
-        <div className={styles.panelTitle}>Ajouter depuis l'arbre</div>
-        <div className={styles.actionRow}>
-          {(['parent', 'child', 'spouse'] as ActionMode[]).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={`${styles.toggle} ${actionMode === mode ? styles.toggleActive : ''}`}
-              onClick={() => setActionMode(actionMode === mode ? null : mode)}
-              disabled={!token}
-            >
-              {mode === 'parent' ? 'Parent' : mode === 'child' ? 'Enfant' : 'Conjoint'}
-            </button>
-          ))}
-        </div>
-        {actionMode ? (
-          <form className={styles.fieldGrid} onSubmit={createRelative}>
+        {!isConsultation ? (
+          <form className={`${styles.fieldGrid} ${styles.editorCard}`} onSubmit={savePerson}>
+            <div className={styles.formTitle}>Modifier la fiche</div>
             <label className={styles.label}>
               Prenoms
               <input
                 className={styles.input}
-                value={newPerson.givenNames}
-                onChange={(event) =>
-                  setNewPerson({ ...newPerson, givenNames: event.target.value })
-                }
+                value={form.givenNames}
+                onChange={(event) => setForm({ ...form, givenNames: event.target.value })}
               />
             </label>
-            <label className={styles.label}>
-              Nom
-              <input
-                className={styles.input}
-                value={newPerson.usageSurname}
-                onChange={(event) =>
-                  setNewPerson({ ...newPerson, usageSurname: event.target.value })
-                }
-              />
-            </label>
+            <div className={styles.twoColumnFields}>
+              <label className={styles.label}>
+                Nom d'usage
+                <input
+                  className={styles.input}
+                  value={form.usageSurname}
+                  onChange={(event) => setForm({ ...form, usageSurname: event.target.value })}
+                />
+              </label>
+              <label className={styles.label}>
+                Nom de naissance
+                <input
+                  className={styles.input}
+                  value={form.birthSurname}
+                  onChange={(event) => setForm({ ...form, birthSurname: event.target.value })}
+                />
+              </label>
+            </div>
             <label className={styles.label}>
               Genre
               <select
                 className={styles.select}
-                value={newPerson.gender}
-                onChange={(event) =>
-                  setNewPerson({ ...newPerson, gender: event.target.value })
-                }
+                value={form.gender}
+                onChange={(event) => setForm({ ...form, gender: event.target.value })}
               >
                 <option value="UNKNOWN">Inconnu</option>
                 <option value="MALE">Homme</option>
@@ -444,29 +305,268 @@ export default function PersonInspector({
                 <option value="OTHER">Autre</option>
               </select>
             </label>
-            <button className={styles.button} disabled={busy || !token}>
-              Creer le lien
+            <div className={styles.twoColumnFields}>
+              <label className={styles.label}>
+                Naissance
+                <input
+                  className={styles.input}
+                  type="date"
+                  value={form.birthDate}
+                  onChange={(event) => setForm({ ...form, birthDate: event.target.value })}
+                />
+              </label>
+              <label className={styles.label}>
+                Deces
+                <input
+                  className={styles.input}
+                  type="date"
+                  value={form.deathDate}
+                  onChange={(event) => setForm({ ...form, deathDate: event.target.value })}
+                />
+              </label>
+            </div>
+            <label className={styles.label}>
+              Lieu de naissance
+              <input
+                className={styles.input}
+                value={form.birthPlace}
+                onChange={(event) => setForm({ ...form, birthPlace: event.target.value })}
+              />
+            </label>
+            <label className={styles.label}>
+              Lieu de deces
+              <input
+                className={styles.input}
+                value={form.deathPlace}
+                onChange={(event) => setForm({ ...form, deathPlace: event.target.value })}
+              />
+            </label>
+            <label className={styles.label}>
+              Notes
+              <textarea
+                className={styles.textarea}
+                value={form.notes}
+                onChange={(event) => setForm({ ...form, notes: event.target.value })}
+              />
+            </label>
+            <button className={`${styles.button} ${styles.primaryButton}`} disabled={!token || busy}>
+              {busy ? 'Enregistrement...' : 'Enregistrer'}
             </button>
           </form>
         ) : null}
-      </section>
+      </InspectorAccordion>
 
-      <section className={`${styles.panel} ${styles.dangerPanel}`}>
-        <div className={styles.panelTitle}>Zone danger</div>
-        <p className={styles.muted}>
-          Choisissez au moment de confirmer : personne seule, descendants
-          seulement, ou personne avec sa descendance.
-        </p>
-        <button
-          type="button"
-          className={styles.dangerButton}
-          disabled={!token}
-          onClick={() => onRequestDeleteBranch(selected)}
+      <DataQualityPanel
+        warnings={integrityWarnings}
+        groups={unionGroups}
+        selectedPersonId={selected.id}
+        token={token}
+        canMutate={canMutate}
+        onSaved={onSaved}
+      />
+
+      <UnionChildrenPanel
+        groups={unionGroups}
+        token={token}
+        canMutate={canMutate}
+      />
+
+      <InspectorAccordion
+        index="03"
+        title="Documents de la personne"
+        subtitle="Actes, photos et pieces directement rattaches au profil"
+        defaultOpen
+      >
+        <EntityDocumentsPanel
+          entityId={selected.id}
+          ownerType="person"
+          title="Pieces du profil"
+          subtitle="Glissez un fichier ici ou utilisez le selecteur."
+          token={token}
+          canUpload={canMutate}
+          defaultCategory="OTHER"
+        />
+      </InspectorAccordion>
+
+      <PersonFactsTabs
+        person={selected}
+        token={token}
+        canMutate={canMutate}
+        onSaved={onSaved}
+      />
+
+      {!isConsultation ? (
+        <InspectorAccordion
+          index="05"
+          title="Actions rapides"
+          subtitle="Ajouter un proche depuis l'arbre"
         >
-          Ouvrir les options de suppression
-        </button>
-      </section>
+          <button
+            type="button"
+            className={`${styles.button} ${styles.primaryButton}`}
+            disabled={!canMutate || !onRequestAddRelative}
+            onClick={() => onRequestAddRelative?.(selected.id)}
+          >
+            Ajouter un proche
+          </button>
+          {!token ? (
+            <div className={styles.formNotice}>Session admin requise.</div>
+          ) : null}
+        </InspectorAccordion>
+      ) : null}
+
+      {!isConsultation ? (
+        <section className={`${styles.inspectorPanel} ${styles.dangerPanel}`}>
+          <div className={styles.panelTitle}>Zone danger</div>
+          <p className={styles.muted}>
+            Choisissez au moment de confirmer : personne seule, descendants
+            seulement, ou personne avec sa descendance.
+          </p>
+          <button
+            type="button"
+            className={styles.dangerButton}
+            disabled={!token}
+            onClick={() => onRequestDeleteBranch(selected)}
+          >
+            Ouvrir les options de suppression
+          </button>
+        </section>
+      ) : null}
     </aside>
+  );
+}
+
+function InspectorAccordion({
+  index,
+  title,
+  subtitle,
+  defaultOpen = false,
+  children,
+}: {
+  index: string;
+  title: string;
+  subtitle: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className={styles.inspectorAccordion} open={defaultOpen}>
+      <summary className={styles.inspectorAccordionSummary}>
+        <span className={styles.sectionIndex}>{index}</span>
+        <span className={styles.sectionTitleBlock}>
+          <span className={styles.sectionTitle}>{title}</span>
+          <span className={styles.sectionSubtitle}>{subtitle}</span>
+        </span>
+        <span className={styles.accordionChevron} aria-hidden="true" />
+      </summary>
+      <div className={styles.inspectorAccordionBody}>{children}</div>
+    </details>
+  );
+}
+
+function IdentityVitals({
+  person,
+  node,
+}: {
+  person: Person;
+  node: TreeNode;
+}) {
+  return (
+    <div className={styles.identitySection}>
+      <div className={styles.vitalCardGrid}>
+        <VitalCard
+          label="Sosa"
+          value={formatSosaNumber(person)}
+          detail={formatSosaHint(person)}
+        />
+        <VitalCard
+          label="Naissance"
+          value={formatDateValue(person.birthDate) || 'Date inconnue'}
+          detail={person.birthPlace || 'Lieu non renseigne'}
+        />
+        <VitalCard
+          label="Deces"
+          value={formatDateValue(person.deathDate) || 'Date inconnue'}
+          detail={person.deathPlace || 'Lieu non renseigne'}
+        />
+        <VitalCard
+          label="Genre"
+          value={genderLabel(person.gender)}
+          detail={formatLife(person) || 'Dates de vie incompletes'}
+        />
+      </div>
+
+      <div className={styles.identityTextGrid}>
+        <InfoLine label="Nom d'usage" value={person.usageSurname || null} />
+        <InfoLine label="Nom naissance" value={person.birthSurname || null} />
+        <InfoLine label="Parents directs" value={String(node.parents.length || 0)} />
+        <InfoLine label="Enfants directs" value={String(node.children.length || 0)} />
+      </div>
+
+      <div className={styles.normalizedPlaceGrid}>
+        <NormalizedPlace label="Lieu naissance normalise" value={person.birthPlace} />
+        <NormalizedPlace label="Lieu deces normalise" value={person.deathPlace} />
+      </div>
+
+      {person.notes ? (
+        <div className={styles.readOnlyNote}>
+          <span>Notes</span>
+          <p>{person.notes}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function VitalCard({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div className={styles.vitalCard}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail ? <small>{detail}</small> : null}
+    </div>
+  );
+}
+
+function NormalizedPlace({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | null;
+}) {
+  const parts = normalizedPlaceParts(value);
+
+  return (
+    <div className={styles.normalizedPlace}>
+      <span>{label}</span>
+      {parts.length > 0 ? (
+        <div className={styles.placePillRow}>
+          {parts.map((part) => (
+            <strong key={part}>{part}</strong>
+          ))}
+        </div>
+      ) : (
+        <em>Non renseigne</em>
+      )}
+    </div>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: number }) {
+  return (
+    <div className={styles.metricCard}>
+      <strong>{value}</strong>
+      <span>{label}</span>
+    </div>
   );
 }
 
@@ -475,12 +575,14 @@ function DataQualityPanel({
   groups,
   selectedPersonId,
   token,
+  canMutate,
   onSaved,
 }: {
   warnings: string[];
   groups: UnionGroup[];
   selectedPersonId: string;
   token: string | null;
+  canMutate: boolean;
   onSaved: (personId?: string) => void;
 }) {
   const [creatingUnionKey, setCreatingUnionKey] = useState<string | null>(null);
@@ -489,7 +591,7 @@ function DataQualityPanel({
   );
 
   async function createMissingUnion(group: UnionGroup) {
-    if (!token || !group.partnerId) return;
+    if (!token || !canMutate || !group.partnerId) return;
     setCreatingUnionKey(group.key);
     try {
       await unionApi.create(
@@ -507,7 +609,7 @@ function DataQualityPanel({
   }
 
   return (
-    <section className={`${styles.panel} ${styles.qualityPanel}`}>
+    <section className={`${styles.inspectorPanel} ${styles.qualityPanel}`}>
       <div className={styles.panelTitle}>Qualite des donnees</div>
       {warnings.length > 0 ? (
         <WarningList warnings={warnings} />
@@ -516,7 +618,7 @@ function DataQualityPanel({
           Aucune anomalie visible dans cette fenetre.
         </div>
       )}
-      {actionableGroups.length > 0 ? (
+      {canMutate && actionableGroups.length > 0 ? (
         <div className={styles.actionRow}>
           {actionableGroups.map((group) => (
             <button
@@ -540,15 +642,23 @@ function DataQualityPanel({
 function UnionChildrenPanel({
   groups,
   token,
+  canMutate,
 }: {
   groups: UnionGroup[];
   token: string | null;
+  canMutate: boolean;
 }) {
+  const [activeDocumentUnionId, setActiveDocumentUnionId] = useState<string | null>(null);
+
   return (
-    <section className={styles.panel}>
-      <div className={styles.panelTitle}>Unions et enfants</div>
+    <InspectorAccordion
+      index="02"
+      title="Conjoints & unions"
+      subtitle="Couples, enfants et documents propres a chaque union"
+      defaultOpen
+    >
       {groups.length === 0 ? (
-        <div className={styles.muted}>Aucune union ou descendance visible.</div>
+        <div className={styles.emptyInline}>Aucune union ou descendance visible.</div>
       ) : (
         <div className={styles.unionGrid}>
           {groups.map((group) => (
@@ -558,22 +668,30 @@ function UnionChildrenPanel({
                   <div className={styles.unionTitle}>{group.title}</div>
                   <div className={styles.muted}>{group.subtitle}</div>
                 </div>
-                <span className={styles.tag}>
+                <span className={styles.unionBadge}>
                   {group.inferred ? 'Coparent visuel' : unionTypeLabel(group.union?.type)}
                 </span>
               </div>
 
+              <div className={styles.unionMetaGrid}>
+                <InfoLine label="Date union" value={formatDateValue(group.union?.startDate)} />
+                <InfoLine label="Lieu union" value={group.union?.startPlace || null} />
+              </div>
+
               {group.children.length > 0 ? (
-                <div className={styles.personChipList}>
-                  {group.children.map((child) => (
-                    <a
-                      key={child.id}
-                      className={styles.personChip}
-                      href={`/person/${child.id}`}
-                    >
-                      {personLabel(child)}
-                    </a>
-                  ))}
+                <div className={styles.unionChildrenBlock}>
+                  <div className={styles.inlineLabel}>Enfants rattaches</div>
+                  <div className={styles.personChipList}>
+                    {group.children.map((child) => (
+                      <a
+                        key={child.id}
+                        className={styles.personChip}
+                        href={`/person/${child.id}`}
+                      >
+                        {personLabel(child)}
+                      </a>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <div className={styles.muted}>Aucun enfant visible pour cette union.</div>
@@ -584,35 +702,60 @@ function UnionChildrenPanel({
               ) : null}
 
               {group.unionId ? (
-                <EntityDocumentsPanel
-                  entityId={group.unionId}
-                  ownerType="union"
-                  title="Documents union"
-                  subtitle="Actes, photos et preuves du couple."
-                  token={token}
-                  defaultCategory="MARRIAGE_CERTIFICATE"
-                  compact
-                />
+                <div className={styles.unionDocumentArea}>
+                  <button
+                    type="button"
+                    className={`${styles.button} ${canMutate ? styles.primaryButton : ''}`}
+                    onClick={() =>
+                      setActiveDocumentUnionId(
+                        activeDocumentUnionId === group.unionId ? null : group.unionId || null,
+                      )
+                    }
+                  >
+                    {activeDocumentUnionId === group.unionId
+                      ? 'Masquer les documents'
+                      : canMutate
+                        ? 'Lier un document'
+                        : 'Voir les documents'}
+                  </button>
+
+                  {activeDocumentUnionId === group.unionId ? (
+                    <EntityDocumentsPanel
+                      entityId={group.unionId}
+                      ownerType="union"
+                      title="Documents de l'union"
+                      subtitle="Contrat, acte de mariage ou preuve du couple."
+                      token={token}
+                      canUpload={canMutate}
+                      defaultCategory="MARRIAGE_CERTIFICATE"
+                      compact
+                    />
+                  ) : null}
+                </div>
               ) : (
                 <div className={styles.muted}>
-                  Creez une union reelle pour attacher des documents de couple.
+                  {canMutate
+                    ? 'Creez une union reelle pour attacher des documents de couple.'
+                    : 'Union non materialisee dans les donnees.'}
                 </div>
               )}
             </article>
           ))}
         </div>
       )}
-    </section>
+    </InspectorAccordion>
   );
 }
 
 function PersonFactsTabs({
   person,
   token,
+  canMutate,
   onSaved,
 }: {
   person: Person;
   token: string | null;
+  canMutate: boolean;
   onSaved: (personId?: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState<InspectorTab>('timeline');
@@ -703,7 +846,7 @@ function PersonFactsTabs({
 
   async function createTimelineEvent(event: FormEvent) {
     event.preventDefault();
-    if (!token) return;
+    if (!token || !canMutate) return;
 
     const type = eventForm.type.trim();
     const role = eventForm.role.trim() || 'SUBJECT';
@@ -751,7 +894,7 @@ function PersonFactsTabs({
 
   async function linkExistingEvent(event: FormEvent) {
     event.preventDefault();
-    if (!token) return;
+    if (!token || !canMutate) return;
 
     const eventId = eventLinkForm.eventId.trim();
     if (!eventId) {
@@ -779,7 +922,7 @@ function PersonFactsTabs({
 
   async function createCitationAndLink(event: FormEvent) {
     event.preventDefault();
-    if (!token) return;
+    if (!token || !canMutate) return;
 
     const sourceId = citationForm.sourceId.trim();
     const confidenceScore = citationForm.confidenceScore.trim()
@@ -835,7 +978,7 @@ function PersonFactsTabs({
 
   async function linkExistingCitation(event: FormEvent) {
     event.preventDefault();
-    if (!token) return;
+    if (!token || !canMutate) return;
 
     const citationId = citationLinkForm.citationId.trim();
     if (!citationId) {
@@ -858,7 +1001,11 @@ function PersonFactsTabs({
   }
 
   return (
-    <section className={styles.panel}>
+    <InspectorAccordion
+      index="04"
+      title="Faits & sources"
+      subtitle="Chronologie, evenements et citations"
+    >
       <div className={styles.tabsRoot}>
         <div className={styles.tabList} role="tablist" aria-label="Faits">
           <button
@@ -885,7 +1032,7 @@ function PersonFactsTabs({
 
         {activeTab === 'timeline' ? (
           <div className={styles.tabPanel} role="tabpanel">
-            {token ? (
+            {canMutate ? (
               <div className={styles.quickForms}>
                 <form className={styles.compactForm} onSubmit={createTimelineEvent}>
                   <div className={styles.formTitle}>Nouvel evenement</div>
@@ -986,11 +1133,7 @@ function PersonFactsTabs({
                   </button>
                 </form>
               </div>
-            ) : (
-              <div className={styles.muted}>
-                Connectez-vous pour creer ou lier un evenement.
-              </div>
-            )}
+            ) : null}
 
             {loadingEvents ? (
               <div className={styles.muted}>Chargement de la chronologie...</div>
@@ -1033,7 +1176,7 @@ function PersonFactsTabs({
           </div>
         ) : (
           <div className={styles.tabPanel} role="tabpanel">
-            {token ? (
+            {canMutate ? (
               <div className={styles.quickForms}>
                 <form className={styles.compactForm} onSubmit={createCitationAndLink}>
                   <div className={styles.formTitle}>Nouvelle citation</div>
@@ -1113,11 +1256,7 @@ function PersonFactsTabs({
                   </button>
                 </form>
               </div>
-            ) : (
-              <div className={styles.muted}>
-                Connectez-vous pour creer ou lier une citation.
-              </div>
-            )}
+            ) : null}
 
             {loadingCitations ? (
               <div className={styles.muted}>Chargement des sources...</div>
@@ -1163,7 +1302,7 @@ function PersonFactsTabs({
           </div>
         )}
       </div>
-    </section>
+    </InspectorAccordion>
   );
 }
 
@@ -1173,6 +1312,7 @@ function EntityDocumentsPanel({
   title,
   subtitle,
   token,
+  canUpload,
   defaultCategory,
   compact = false,
 }: {
@@ -1181,6 +1321,7 @@ function EntityDocumentsPanel({
   title: string;
   subtitle: string;
   token: string | null;
+  canUpload: boolean;
   defaultCategory: string;
   compact?: boolean;
 }) {
@@ -1188,6 +1329,7 @@ function EntityDocumentsPanel({
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const [category, setCategory] = useState(defaultCategory);
   const [description, setDescription] = useState('');
 
@@ -1202,7 +1344,7 @@ function EntityDocumentsPanel({
     request
       .then((result) => {
         if (!alive) return;
-        setDocuments(Array.isArray(result.data) ? result.data : []);
+        setDocuments(readApiList<any>(result));
       })
       .catch(() => {
         if (!alive) return;
@@ -1222,25 +1364,27 @@ function EntityDocumentsPanel({
       ownerType === 'person'
         ? await documentApi.getByPerson(entityId)
         : await documentApi.getByUnion(entityId);
-    setDocuments(Array.isArray(result.data) ? result.data : []);
+    setDocuments(readApiList<any>(result));
   }
 
-  async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file || !token) return;
+  async function uploadFiles(files: FileList | File[]) {
+    const fileList = Array.from(files).filter(Boolean);
+    if (fileList.length === 0 || !token || !canUpload) return;
 
     setUploading(true);
     try {
-      await documentApi.upload(
-        file,
-        {
-          personId: ownerType === 'person' ? entityId : undefined,
-          unionId: ownerType === 'union' ? entityId : undefined,
-          category,
-          description: description.trim() || undefined,
-        },
-        token,
-      );
+      for (const file of fileList) {
+        await documentApi.upload(
+          file,
+          {
+            personId: ownerType === 'person' ? entityId : undefined,
+            unionId: ownerType === 'union' ? entityId : undefined,
+            category,
+            description: description.trim() || undefined,
+          },
+          token,
+        );
+      }
       await refreshDocuments();
       setDescription('');
     } finally {
@@ -1249,8 +1393,31 @@ function EntityDocumentsPanel({
     }
   }
 
+  function handleUpload(event: ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files;
+    if (!files) return;
+    void uploadFiles(files);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    if (canUpload) setDragActive(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setDragActive(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setDragActive(false);
+    if (!event.dataTransfer.files) return;
+    void uploadFiles(event.dataTransfer.files);
+  }
+
   async function handleDelete(documentId: string) {
-    if (!token) return;
+    if (!token || !canUpload) return;
     if (!window.confirm('Supprimer ce document ?')) return;
 
     await documentApi.delete(documentId, token);
@@ -1258,7 +1425,11 @@ function EntityDocumentsPanel({
   }
 
   return (
-    <div className={compact ? styles.compactDocumentPanel : undefined}>
+    <div
+      className={`${styles.documentPanel} ${
+        compact ? styles.compactDocumentPanel : ''
+      }`}
+    >
       <div className={styles.documentHeader}>
         <div>
           <div className={styles.panelTitle}>
@@ -1268,35 +1439,49 @@ function EntityDocumentsPanel({
         </div>
       </div>
 
-      {token ? (
-        <div className={styles.documentControls}>
-          <select
-            className={styles.select}
-            value={category}
-            onChange={(event) => setCategory(event.target.value)}
+      {canUpload ? (
+        <div className={styles.documentDropGroup}>
+          <div className={styles.documentControls}>
+            <select
+              className={styles.select}
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+            >
+              {CATEGORY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <input
+              className={styles.input}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="Description"
+            />
+          </div>
+          <label
+            className={`${styles.dropZone} ${
+              dragActive ? styles.dropZoneActive : ''
+            }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
           >
-            {CATEGORY_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <input
-            className={styles.input}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder="Description"
-          />
-          <label className={`${styles.button} ${styles.primaryButton}`}>
-            {uploading ? 'Envoi...' : 'Ajouter'}
             <input
               ref={fileInputRef}
               type="file"
               accept="image/*,.pdf,.doc,.docx"
               onChange={handleUpload}
               disabled={uploading}
+              multiple
               hidden
             />
+            <span className={styles.dropZoneIcon} aria-hidden="true">
+              +
+            </span>
+            <strong>{uploading ? 'Envoi en cours...' : 'Deposer les fichiers ici'}</strong>
+            <small>PDF, images ou documents bureautiques</small>
           </label>
         </div>
       ) : null}
@@ -1313,7 +1498,7 @@ function EntityDocumentsPanel({
                 {isImageMimeType(document.mimeType) ? (
                   <img src={documentApi.viewUrl(document.id)} alt={document.filename} />
                 ) : (
-                  <span>PDF</span>
+                  <span>{documentKindLabel(document.mimeType)}</span>
                 )}
               </div>
               <div className={styles.documentMeta}>
@@ -1327,7 +1512,7 @@ function EntityDocumentsPanel({
                     Voir
                   </a>
                   <a href={documentApi.downloadUrl(document.id)}>Telecharger</a>
-                  {token ? (
+                  {canUpload ? (
                     <button type="button" onClick={() => handleDelete(document.id)}>
                       Supprimer
                     </button>
@@ -1361,6 +1546,38 @@ function InfoLine({ label, value }: { label: string; value?: string | null }) {
       <strong>{value || 'Non renseigne'}</strong>
     </div>
   );
+}
+
+function genderLabel(gender?: Person['gender']) {
+  if (gender === 'MALE') return 'Homme';
+  if (gender === 'FEMALE') return 'Femme';
+  if (gender === 'OTHER') return 'Autre';
+  return 'Inconnu';
+}
+
+function formatSosaNumber(person: Person) {
+  return person.sosaNumber ? `Sosa ${person.sosaNumber}` : 'Non attribue';
+}
+
+function formatSosaHint(person: Person) {
+  if (!person.sosaNumber) return 'Hors ligne Sosa visible';
+  if (person.sosaNumber === 1) return 'Racine de numerotation';
+  return person.sosaNumber % 2 === 0 ? 'Ascendant paternel' : 'Ascendant maternel';
+}
+
+function normalizedPlaceParts(value?: string | null) {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function documentKindLabel(mimeType?: string | null) {
+  if (!mimeType) return 'DOC';
+  if (mimeType.includes('pdf')) return 'PDF';
+  if (mimeType.includes('word')) return 'DOC';
+  return 'FILE';
 }
 
 function buildUnionGroups(tree: TreeWindow, selectedNode: TreeNode): UnionGroup[] {

@@ -4,7 +4,12 @@
 
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreatePersonDto, UpdatePersonDto } from './dto/person.dto';
+import {
+  CreatePersonDto,
+  CreateRelativeDto,
+  RelativeLinkType,
+  UpdatePersonDto,
+} from './dto/person.dto';
 import { Prisma } from '@prisma/client';
 
 type IntegrityLinkMode = 'PARENT_OF_COMPONENT' | 'CHILD_OF_COMPONENT' | 'UNION';
@@ -237,6 +242,198 @@ export class PersonService {
     ]);
 
     return this.serializePerson(created);
+  }
+
+  async createRelative(
+    treeId: string,
+    anchorPersonId: string,
+    dto: CreateRelativeDto,
+    actor = DEFAULT_ACTOR,
+  ) {
+    await this.assertTreeExists(treeId);
+
+    const anchor = await this.prisma.person.findFirst({
+      where: { id: anchorPersonId, treeId },
+      include: {
+        birthPlace: true,
+        deathPlace: true,
+      },
+    });
+
+    if (!anchor) {
+      throw new NotFoundException(`Person with ID "${anchorPersonId}" not found`);
+    }
+
+    const givenNames = dto.person?.givenNames?.trim();
+    if (!givenNames) {
+      throw new BadRequestException('Le prenom du proche est obligatoire.');
+    }
+
+    const usageSurname = this.cleanOptionalString(dto.person.usageSurname);
+    const birthDate = this.parseOptionalDate(dto.person.birthDate, 'birthDate');
+    this.validatePersonChronology(birthDate, null);
+
+    const gender =
+      dto.linkType === RelativeLinkType.FATHER
+        ? 'MALE'
+        : dto.linkType === RelativeLinkType.MOTHER
+          ? 'FEMALE'
+          : 'UNKNOWN';
+
+    const birthPlaceId = await this.findOrCreatePlaceId(dto.person.birthPlace);
+    const normalizedFields = this.buildNormalizedPersonFields({
+      givenNames,
+      usageSurname,
+      birthSurname: usageSurname,
+      birthDate,
+      deathDate: null,
+    });
+
+    if (
+      dto.linkType === RelativeLinkType.FATHER ||
+      dto.linkType === RelativeLinkType.MOTHER
+    ) {
+      this.validateParentChildChronology(
+        { birthDate, deathDate: null },
+        anchor,
+        'BIOLOGICAL',
+      );
+    }
+
+    if (dto.linkType === RelativeLinkType.CHILD) {
+      this.validateParentChildChronology(
+        anchor,
+        { birthDate, deathDate: null },
+        'BIOLOGICAL',
+      );
+    }
+
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const created = await tx.person.create({
+          data: {
+            treeId,
+            usageSurname,
+            birthSurname: usageSurname,
+            givenNames,
+            gender,
+            birthDate,
+            birthPlaceId,
+            deathDate: null,
+            deathPlaceId: null,
+            professions: [],
+            residences: [],
+            isRootDefault: false,
+            ...normalizedFields,
+          },
+          include: {
+            birthPlace: true,
+            deathPlace: true,
+          },
+        });
+
+        if (
+          dto.linkType === RelativeLinkType.FATHER ||
+          dto.linkType === RelativeLinkType.MOTHER
+        ) {
+          const relationship = await tx.relationship.create({
+            data: {
+              parentId: created.id,
+              childId: anchor.id,
+              type: 'BIOLOGICAL',
+            },
+            include: {
+              parent: true,
+              child: true,
+            },
+          });
+
+          return {
+            linkType: dto.linkType,
+            anchorPersonId: anchor.id,
+            createdPerson: this.serializePerson(created),
+            relationship,
+            union: null,
+          };
+        }
+
+        if (dto.linkType === RelativeLinkType.CHILD) {
+          const relationship = await tx.relationship.create({
+            data: {
+              parentId: anchor.id,
+              childId: created.id,
+              type: 'BIOLOGICAL',
+            },
+            include: {
+              parent: true,
+              child: true,
+            },
+          });
+
+          return {
+            linkType: dto.linkType,
+            anchorPersonId: anchor.id,
+            createdPerson: this.serializePerson(created),
+            relationship,
+            union: null,
+          };
+        }
+
+        const union = await tx.union.create({
+          data: {
+            treeId,
+            partner1Id: anchor.id,
+            partner2Id: created.id,
+            type: 'PARTNERSHIP',
+          },
+          include: {
+            partner1: true,
+            partner2: true,
+          },
+        });
+
+        return {
+          linkType: dto.linkType,
+          anchorPersonId: anchor.id,
+          createdPerson: this.serializePerson(created),
+          relationship: null,
+          union,
+        };
+      },
+      {
+        maxWait: INTERACTIVE_TRANSACTION_MAX_WAIT_MS,
+        timeout: INTERACTIVE_TRANSACTION_TIMEOUT_MS,
+      },
+    );
+
+    await this.appendPersonHistory([
+      {
+        id: this.makeEventId('person-created'),
+        personId: result.createdPerson.id,
+        eventType: 'PERSON_CREATED',
+        actor,
+        at: new Date().toISOString(),
+        details: {
+          label: this.buildPersonLabel(result.createdPerson),
+          relativeOf: anchor.id,
+          linkType: dto.linkType,
+        },
+      },
+      {
+        id: this.makeEventId('person-updated'),
+        personId: anchor.id,
+        eventType: 'PERSON_UPDATED',
+        actor,
+        at: new Date().toISOString(),
+        details: {
+          label: this.buildPersonLabel(anchor),
+          relativeCreatedId: result.createdPerson.id,
+          linkType: dto.linkType,
+        },
+      },
+    ]);
+
+    return result;
   }
 
   async findAll(treeId: string, page = 1, limit = 20) {
@@ -2253,6 +2450,20 @@ export class PersonService {
     await this.setJsonSetting(PERSON_HISTORY_LOGS_KEY, next);
   }
 
+  private cleanOptionalString(value?: string | null) {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  private parseOptionalDate(value: string | undefined | null, fieldName: string) {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(`${fieldName} invalide.`);
+    }
+    return parsed;
+  }
+
   private validatePersonChronology(
     birthDate: Date | null,
     deathDate: Date | null,
@@ -2260,6 +2471,35 @@ export class PersonService {
     if (birthDate && deathDate && deathDate < birthDate) {
       throw new BadRequestException(
         'Incohérence de dates: la date de décès ne peut pas être antérieure à la date de naissance.',
+      );
+    }
+  }
+
+  private validateParentChildChronology(
+    parent: { birthDate: Date | null; deathDate: Date | null },
+    child: { birthDate: Date | null; deathDate: Date | null },
+    relationshipType: IntegrityRelationshipType,
+  ) {
+    if (parent.birthDate && child.birthDate && parent.birthDate > child.birthDate) {
+      throw new BadRequestException(
+        'Incoherence de filiation: un parent ne peut pas etre ne apres son enfant.',
+      );
+    }
+
+    if (
+      relationshipType === 'BIOLOGICAL' &&
+      parent.deathDate &&
+      child.birthDate &&
+      parent.deathDate < child.birthDate
+    ) {
+      throw new BadRequestException(
+        'Incoherence de filiation biologique: le parent ne peut pas etre decede avant la naissance de l enfant.',
+      );
+    }
+
+    if (child.birthDate && child.deathDate && child.deathDate < child.birthDate) {
+      throw new BadRequestException(
+        'Incoherence de dates enfant: la date de deces ne peut pas etre anterieure a la date de naissance.',
       );
     }
   }

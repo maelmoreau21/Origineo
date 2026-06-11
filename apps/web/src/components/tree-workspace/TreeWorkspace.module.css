@@ -7,7 +7,7 @@
 
 .shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) 8px minmax(300px, var(--inspector-width, 380px));
   grid-template-rows: auto minmax(0, 1fr);
   height: 100vh;
 }
@@ -121,7 +121,58 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.modeSwitch {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #2b343d;
+  border-radius: 8px;
+  padding: 0 10px 0 8px;
+  background: #151b21;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.modeSwitch:hover {
+  background: #1b232b;
+}
+
+.modeSwitchTrack {
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  padding: 2px;
+  background: #2c343c;
+  transition: background 160ms ease;
+}
+
+.modeSwitchThumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #dfe7ec;
+  transform: translateX(0);
+  transition: transform 160ms ease;
+}
+
+.modeSwitchActive .modeSwitchTrack {
+  background: #247c64;
+}
+
+.modeSwitchActive .modeSwitchThumb {
+  transform: translateX(16px);
+}
+
+.modeSwitchText {
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .controlGroup {
@@ -244,6 +295,12 @@
   background: #1b232b;
 }
 
+.buttonDisabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .primaryButton {
   background: #1f6f58;
   border-color: #278568;
@@ -256,10 +313,41 @@
 }
 
 .canvasPane {
+  grid-column: 1;
   position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.inspectorResizeHandle {
+  grid-column: 2;
+  min-width: 8px;
+  min-height: 0;
+  border: 0;
+  border-left: 1px solid #252c33;
+  border-right: 1px solid #252c33;
+  background: #0f1419;
+  cursor: col-resize;
+  position: relative;
+}
+
+.inspectorResizeHandle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 44px;
+  border-radius: 999px;
+  background: #43505b;
+  transform: translate(-50%, -50%);
+}
+
+.inspectorResizeHandle:hover,
+.inspectorResizeHandle:focus-visible {
+  background: #151c22;
+  outline: none;
 }
 
 .canvasViewport {
@@ -336,6 +424,16 @@
 
 .personCard:hover {
   border-color: rgba(255, 255, 255, 0.3);
+}
+
+.canvasPaneReadOnly .personCard {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: #12181e;
+  box-shadow: none;
+}
+
+.canvasPaneReadOnly .personCard:hover {
+  border-color: rgba(124, 187, 170, 0.28);
 }
 
 .personCardSelected {
@@ -455,10 +553,294 @@
 }
 
 .inspector {
+  grid-column: 3;
   min-height: 0;
   overflow-y: auto;
-  border-left: 1px solid #252c33;
   background: #10151a;
+}
+
+.inspectorPanel {
+  padding: 16px;
+  border-bottom: 1px solid #252c33;
+}
+
+.inspectorHero {
+  display: grid;
+  gap: 14px;
+  background: #12181e;
+}
+
+.inspectorHeroTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inspectorHeroIdentity {
+  min-width: 0;
+}
+
+.modeBadge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.modeBadgeReadOnly {
+  border: 1px solid rgba(151, 176, 194, 0.24);
+  background: rgba(151, 176, 194, 0.1);
+  color: #d7e1e8;
+}
+
+.modeBadgeEdit {
+  border: 1px solid rgba(77, 190, 151, 0.34);
+  background: rgba(77, 190, 151, 0.12);
+  color: #dffcf3;
+}
+
+.inspectorMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.metricCard,
+.vitalCard {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.metricCard strong,
+.vitalCard strong {
+  display: block;
+  color: #f0f4f7;
+  font-size: 18px;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.metricCard span,
+.vitalCard span,
+.vitalCard small {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.inspectorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inspectorAccordion {
+  border-bottom: 1px solid #252c33;
+  background: #10151a;
+}
+
+.inspectorAccordionSummary {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.inspectorAccordionSummary::-webkit-details-marker {
+  display: none;
+}
+
+.sectionIndex {
+  color: #82ccb8;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.sectionTitleBlock {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.sectionTitle {
+  color: #eef4f7;
+  font-size: 13px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.sectionSubtitle {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.accordionChevron {
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid #7e8d99;
+  border-bottom: 2px solid #7e8d99;
+  transform: rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.inspectorAccordion[open] .accordionChevron {
+  transform: rotate(225deg);
+}
+
+.inspectorAccordionBody {
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 16px;
+}
+
+.identitySection {
+  display: grid;
+  gap: 12px;
+}
+
+.vitalCardGrid,
+.identityTextGrid,
+.normalizedPlaceGrid,
+.unionMetaGrid {
+  display: grid;
+  gap: 8px;
+}
+
+.vitalCardGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.normalizedPlace {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.normalizedPlace span,
+.inlineLabel {
+  display: block;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 900;
+  margin-bottom: 7px;
+}
+
+.normalizedPlace em {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.placePillRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.placePillRow strong,
+.unionBadge {
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: rgba(124, 187, 170, 0.12);
+  color: #dffcf3;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.readOnlyNote {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.readOnlyNote span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.readOnlyNote p {
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.editorCard {
+  border: 1px solid rgba(77, 190, 151, 0.18);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(77, 190, 151, 0.055);
+}
+
+.unionChildrenBlock,
+.unionDocumentArea,
+.documentPanel,
+.documentDropGroup {
+  display: grid;
+  gap: 10px;
+}
+
+.documentPanel {
+  min-width: 0;
+}
+
+.dropZone {
+  min-height: 88px;
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  border: 1px dashed rgba(124, 187, 170, 0.34);
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(77, 190, 151, 0.07);
+  color: #dffcf3;
+  cursor: pointer;
+  text-align: center;
+}
+
+.dropZoneActive {
+  border-color: #77d8bc;
+  background: rgba(77, 190, 151, 0.14);
+}
+
+.dropZoneIcon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #1f6f58;
+  color: #f1fff9;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.dropZone strong,
+.dropZone small {
+  display: block;
+  font-size: 12px;
+}
+
+.dropZone small {
+  color: var(--color-text-secondary);
 }
 
 .panel {
@@ -884,7 +1266,7 @@
 
 .documentControls {
   display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
   gap: 8px;
   align-items: center;
   margin-top: 10px;
@@ -963,6 +1345,399 @@
   color: #ffb3bf;
 }
 
+.inspector {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 12px;
+  border-left: 1px solid #252c33;
+  background:
+    linear-gradient(180deg, rgba(18, 24, 29, 0.98), rgba(13, 17, 21, 0.98)),
+    #10151a;
+}
+
+.inspectorPanel,
+.inspectorAccordion {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(19, 25, 31, 0.92);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+
+.inspectorHero {
+  padding: 16px;
+  background:
+    linear-gradient(135deg, rgba(33, 96, 82, 0.28), rgba(19, 25, 31, 0.92) 42%),
+    #13191f;
+}
+
+.inspectorHeroTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inspectorHeroIdentity {
+  min-width: 0;
+}
+
+.modeBadge,
+.unionBadge {
+  flex: 0 0 auto;
+  max-width: 100%;
+  border-radius: 999px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 11px;
+  font-weight: 800;
+  color: #dfe9ee;
+  white-space: nowrap;
+}
+
+.modeBadgeEdit {
+  background: rgba(74, 153, 126, 0.2);
+  border-color: rgba(74, 153, 126, 0.35);
+}
+
+.modeBadgeReadOnly {
+  background: rgba(185, 161, 100, 0.18);
+  border-color: rgba(185, 161, 100, 0.34);
+  color: #f3dfb1;
+}
+
+.inspectorMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.metricCard {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  padding: 9px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.metricCard strong {
+  display: block;
+  color: #f5f8fa;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.metricCard span {
+  display: block;
+  margin-top: 5px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.inspectorActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.inspectorAccordion {
+  display: block;
+}
+
+.inspectorAccordionSummary {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 18px;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.inspectorAccordionSummary::-webkit-details-marker {
+  display: none;
+}
+
+.sectionIndex {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: rgba(77, 190, 151, 0.13);
+  color: #bdebdc;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.sectionTitleBlock {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.sectionTitle {
+  color: #f0f4f7;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.sectionSubtitle {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.accordionChevron {
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid #8aa0ac;
+  border-bottom: 2px solid #8aa0ac;
+  transform: rotate(45deg);
+  transition: transform 140ms ease;
+}
+
+.inspectorAccordion[open] .accordionChevron {
+  transform: rotate(225deg);
+}
+
+.inspectorAccordionBody {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
+.identitySection {
+  display: grid;
+  gap: 12px;
+}
+
+.vitalCardGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.vitalCard {
+  min-width: 0;
+  min-height: 96px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  padding: 11px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.vitalCard span,
+.inlineLabel {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.vitalCard strong {
+  color: #f5f8fa;
+  font-size: 14px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.vitalCard small {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.identityTextGrid,
+.unionMetaGrid {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.normalizedPlaceGrid {
+  display: grid;
+  gap: 8px;
+}
+
+.normalizedPlace {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  border: 1px solid rgba(121, 166, 188, 0.22);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(121, 166, 188, 0.08);
+}
+
+.normalizedPlace > span {
+  color: #bfd7e3;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.normalizedPlace em {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.placePillRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.placePillRow strong {
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 7px;
+  padding: 4px 7px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #edf6fa;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.readOnlyNote {
+  display: grid;
+  gap: 6px;
+  border-left: 3px solid rgba(185, 161, 100, 0.75);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(185, 161, 100, 0.1);
+}
+
+.readOnlyNote span {
+  color: #f0dba7;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.readOnlyNote p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.editorCard {
+  border: 1px solid rgba(77, 190, 151, 0.16);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(77, 190, 151, 0.055);
+}
+
+.unionGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.unionCard {
+  display: grid;
+  gap: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px;
+  background:
+    linear-gradient(135deg, rgba(121, 166, 188, 0.09), rgba(255, 255, 255, 0.035)),
+    rgba(255, 255, 255, 0.035);
+}
+
+.unionBadge {
+  background: rgba(185, 161, 100, 0.14);
+  border-color: rgba(185, 161, 100, 0.3);
+  color: #f3dfb1;
+}
+
+.unionChildrenBlock {
+  display: grid;
+  gap: 7px;
+}
+
+.unionDocumentArea {
+  display: grid;
+  gap: 9px;
+}
+
+.documentPanel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.documentDropGroup {
+  display: grid;
+  gap: 9px;
+}
+
+.dropZone {
+  min-height: 126px;
+  display: grid;
+  place-items: center;
+  gap: 5px;
+  padding: 16px;
+  border: 1px dashed rgba(77, 190, 151, 0.46);
+  border-radius: 8px;
+  background: rgba(77, 190, 151, 0.075);
+  color: #dffcf3;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.dropZone:hover,
+.dropZoneActive {
+  border-color: rgba(115, 225, 186, 0.88);
+  background: rgba(77, 190, 151, 0.13);
+}
+
+.dropZoneIcon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(77, 190, 151, 0.18);
+  color: #dffcf3;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.dropZone strong {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.dropZone small {
+  max-width: 220px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .dialogOverlay {
   position: fixed;
   inset: 0;
@@ -980,6 +1755,325 @@
   background: #121a22;
   padding: 18px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.dialogHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.dialogTitle {
+  margin: 0;
+  color: #f0f4f7;
+  font-size: 20px;
+  font-weight: 850;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.relativeDialog {
+  width: min(640px, calc(100vw - 32px));
+}
+
+.directoryDialog {
+  width: min(1040px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 32px));
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.directoryControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.directoryControls .searchInput {
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.directoryTableWrap {
+  min-height: 260px;
+  overflow: auto;
+  border: 1px solid #2b343d;
+  border-radius: 8px;
+  background: #0f151b;
+}
+
+.directoryTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.directoryTable th,
+.directoryTable td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.directoryTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #151b21;
+}
+
+.directoryTable th button {
+  min-height: 28px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #dfe7ec;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 850;
+}
+
+.directoryTable tbody tr {
+  cursor: default;
+}
+
+.directoryTable tbody tr:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.directoryTable td {
+  color: var(--color-text-secondary);
+  max-width: 240px;
+  overflow-wrap: anywhere;
+}
+
+.directoryTable td strong {
+  color: var(--color-text-primary);
+}
+
+.directoryRowSelected {
+  background: rgba(77, 190, 151, 0.09);
+}
+
+.rootBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  margin-left: 8px;
+  border: 1px solid rgba(185, 161, 100, 0.38);
+  border-radius: 7px;
+  padding: 0 6px;
+  background: rgba(185, 161, 100, 0.12);
+  color: #f3dfb1;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.tableAction {
+  min-height: 28px;
+  border: 1px solid rgba(77, 190, 151, 0.24);
+  border-radius: 7px;
+  padding: 0 8px;
+  background: rgba(77, 190, 151, 0.09);
+  color: #dffcf3;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.stepRail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.stepDot {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #2b343d;
+  border-radius: 999px;
+  background: #151b21;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.stepDotActive {
+  border-color: rgba(77, 190, 151, 0.72);
+  background: rgba(77, 190, 151, 0.18);
+  color: #dffcf3;
+}
+
+.linkChoiceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.linkChoice {
+  min-height: 92px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  border: 1px solid #2b343d;
+  border-radius: 8px;
+  padding: 14px;
+  background: #151b21;
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.linkChoice:hover,
+.linkChoiceActive {
+  border-color: rgba(77, 190, 151, 0.52);
+  background: rgba(77, 190, 151, 0.1);
+}
+
+.linkChoice strong {
+  font-size: 14px;
+}
+
+.linkChoice span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.selectedLinkLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(77, 190, 151, 0.22);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: rgba(77, 190, 151, 0.075);
+}
+
+.selectedLinkLine span {
+  color: #dffcf3;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.selectedLinkLine button {
+  border: 0;
+  background: transparent;
+  color: #91d7c2;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.confirmPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.confirmTitle {
+  color: #f0f4f7;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.confirmGrid {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 12px;
+}
+
+.confirmGrid span {
+  color: var(--color-text-tertiary);
+}
+
+.confirmGrid strong {
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.personAddButton {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(77, 190, 151, 0.28);
+  border-radius: 8px;
+  background: rgba(13, 17, 21, 0.92);
+  color: #dffcf3;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 850;
+  line-height: 1;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.personCard:hover .personAddButton,
+.personCard:focus-within .personAddButton,
+.personCardSelected .personAddButton {
+  opacity: 1;
+}
+
+.personAddButton:hover,
+.personAddButton:focus-visible {
+  border-color: rgba(115, 225, 186, 0.76);
+  background: rgba(31, 111, 88, 0.94);
+  outline: none;
+}
+
+.button:disabled,
+.primaryButton:disabled,
+.dangerButton:disabled,
+.tableAction:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .directoryDialog,
+  .relativeDialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    padding: 14px;
+  }
+
+  .directoryControls,
+  .linkChoiceGrid,
+  .confirmGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .directoryTable {
+    min-width: 760px;
+  }
 }
 
 .emptyState {
@@ -1028,10 +2122,16 @@
   }
 
   .canvasPane {
+    grid-column: 1;
     height: 58vh;
   }
 
+  .inspectorResizeHandle {
+    display: none;
+  }
+
   .inspector {
+    grid-column: 1;
     border-left: 0;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
   }

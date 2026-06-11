@@ -17,7 +17,12 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { UnionService } from './union.service';
-import { CreateUnionDto, UpdateUnionDto } from './dto/union.dto';
+import {
+  AttachUnionDocumentDto,
+  CreateSpouseUnionDto,
+  CreateUnionDto,
+  UpdateUnionDto,
+} from './dto/union.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -33,7 +38,26 @@ export class UnionController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a union (marriage, PACS, etc.)' })
   async create(@Body() dto: CreateUnionDto) {
+    this.assertTreeId(dto.treeId);
     return { success: true, data: await this.unionService.create(dto) };
+  }
+
+  @Post('person/:personId/spouse')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Associate a spouse/partner union to a person' })
+  @ApiQuery({ name: 'treeId', required: true })
+  async createForPerson(
+    @Param('personId', ParseUUIDPipe) personId: string,
+    @Query('treeId') treeId: string,
+    @Body() dto: CreateSpouseUnionDto,
+  ) {
+    this.assertTreeId(treeId);
+    return {
+      success: true,
+      data: await this.unionService.createForPerson(treeId, personId, dto),
+    };
   }
 
   @Get()
@@ -70,6 +94,24 @@ export class UnionController {
   ) {
     this.assertTreeId(treeId);
     return { success: true, data: await this.unionService.findOne(treeId, id) };
+  }
+
+  @Post(':id/documents')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Attach an existing document to a union' })
+  @ApiQuery({ name: 'treeId', required: true })
+  async attachDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
+    @Body() dto: AttachUnionDocumentDto,
+  ) {
+    this.assertTreeId(treeId);
+    return {
+      success: true,
+      data: await this.unionService.attachDocument(treeId, id, dto),
+    };
   }
 
   @Patch(':id')

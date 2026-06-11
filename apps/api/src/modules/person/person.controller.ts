@@ -18,7 +18,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { PersonService } from './person.service';
-import { CreatePersonDto, UpdatePersonDto } from './dto/person.dto';
+import { CreatePersonDto, CreateRelativeDto, UpdatePersonDto } from './dto/person.dto';
 import {
   ConnectDisconnectedComponentDto,
   UpdateQualityRulesDto,
@@ -271,6 +271,25 @@ export class PersonController {
     return {
       success: true,
       data: await this.personService.getPersonHistory(treeId, id, parsedLimit),
+    };
+  }
+
+  @Post(':id/relatives')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create a relative and attach it to the selected person' })
+  @ApiQuery({ name: 'treeId', required: true, type: String })
+  async createRelative(
+    @Request() req: any,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('treeId') treeId: string,
+    @Body() dto: CreateRelativeDto,
+  ) {
+    this.assertTreeId(treeId);
+    return {
+      success: true,
+      data: await this.personService.createRelative(treeId, id, dto, req.user?.email),
     };
   }
 

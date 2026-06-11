@@ -10,14 +10,24 @@ import {
   IsBoolean,
   IsDateString,
   IsUUID,
+  MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 
 enum Gender {
   MALE = 'MALE',
   FEMALE = 'FEMALE',
   OTHER = 'OTHER',
   UNKNOWN = 'UNKNOWN',
+}
+
+export enum RelativeLinkType {
+  FATHER = 'FATHER',
+  MOTHER = 'MOTHER',
+  SPOUSE = 'SPOUSE',
+  CHILD = 'CHILD',
 }
 
 export class CreatePersonDto {
@@ -144,3 +154,36 @@ export class CreatePersonDto {
 }
 
 export class UpdatePersonDto extends PartialType(CreatePersonDto) {}
+
+export class CreateRelativePersonDto {
+  @ApiProperty({ example: 'Jean Marie' })
+  @IsString()
+  @MinLength(1)
+  givenNames: string;
+
+  @ApiPropertyOptional({ example: 'Dupont' })
+  @IsOptional()
+  @IsString()
+  usageSurname?: string;
+
+  @ApiPropertyOptional({ example: '1950-03-15' })
+  @IsOptional()
+  @IsDateString()
+  birthDate?: string;
+
+  @ApiPropertyOptional({ example: 'Paris, France' })
+  @IsOptional()
+  @IsString()
+  birthPlace?: string;
+}
+
+export class CreateRelativeDto {
+  @ApiProperty({ enum: RelativeLinkType })
+  @IsEnum(RelativeLinkType)
+  linkType: RelativeLinkType;
+
+  @ApiProperty({ type: CreateRelativePersonDto })
+  @ValidateNested()
+  @Type(() => CreateRelativePersonDto)
+  person: CreateRelativePersonDto;
+}

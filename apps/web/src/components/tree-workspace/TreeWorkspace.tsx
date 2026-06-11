@@ -1,16 +1,30 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   DEFAULT_TREE_ID,
   personApi,
   searchApi,
   treeApi,
 } from '@/lib/api';
+import AddRelativeModal, { RelativeLinkType } from './AddRelativeModal';
 import BranchDeleteDialog from './BranchDeleteDialog';
 import PersonInspector from './PersonInspector';
 import TreeCanvas from './TreeCanvas';
+import TreeDirectoryDialog from './TreeDirectoryDialog';
 import TreeToolbar from './TreeToolbar';
+import {
+  type TreeWorkspaceMode,
+  TreeWorkspaceProvider,
+} from './TreeWorkspaceContext';
 import styles from './TreeWorkspace.module.css';
 import { Person, TreeWindow } from './types';
 
@@ -31,6 +45,23 @@ export default function TreeWorkspace() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Person | null>(null);
+  const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [relativeRequest, setRelativeRequest] = useState<{
+    personId: string;
+    linkType?: RelativeLinkType | null;
+  } | null>(null);
+  const [mode, setMode] = useState<TreeWorkspaceMode>('modification');
+  const [inspectorWidth, setInspectorWidth] = useState(380);
+  const shellRef = useRef<HTMLDivElement>(null);
+
+  const workspaceContext = useMemo(
+    () => ({
+      mode,
+      setMode,
+      isReadOnly: mode === 'consultation',
+    }),
+    [mode],
+  );
 
   useEffect(() => {
     document.body.classList.add('tree-workspace-mode');
@@ -97,9 +128,23 @@ export default function TreeWorkspace() {
     loadTree(rootPersonId, selectedPersonId || rootPersonId);
   }, [rootPersonId, ancestors, descendants, includeSiblings, includeSpouses]);
 
+  useEffect(() => {
+    if (mode === 'consultation') {
+      setRelativeRequest(null);
+    }
+  }, [mode]);
+
   const selectedPerson = useMemo(
     () => tree?.nodes.find((node) => node.person.id === selectedPersonId)?.person || null,
     [tree, selectedPersonId],
+  );
+
+  const relativeAnchorPerson = useMemo(
+    () =>
+      tree?.nodes.find((node) => node.person.id === relativeRequest?.personId)?.person ||
+      selectedPerson ||
+      null,
+    [relativeRequest?.personId, selectedPerson, tree],
   );
 
   async function runSearch() {
@@ -146,75 +191,160 @@ export default function TreeWorkspace() {
     );
   }
 
+  function requestAddRelative(personId: string, linkType?: RelativeLinkType | null) {
+    if (mode === 'consultation') return;
+    setSelectedPersonId(personId);
+    setRelativeRequest({ personId, linkType });
+  }
+
+  async function reloadAfterRelativeCreated(createdPersonId: string) {
+    const anchorPersonId = relativeRequest?.personId || selectedPersonId || rootPersonId;
+    setNotice('Proche ajoute et lien reconstruit.');
+    setRelativeRequest(null);
+    if (anchorPersonId) {
+      await loadTree(anchorPersonId, createdPersonId);
+    }
+  }
+
+  const beginInspectorResize = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+
+      const shellRect = shellRef.current?.getBoundingClientRect();
+      if (!shellRect) return;
+
+      const minWidth = 300;
+      const maxWidth = Math.min(680, Math.max(minWidth, shellRect.width - 420));
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      const resize = (moveEvent: MouseEvent) => {
+        setInspectorWidth(
+          clamp(shellRect.right - moveEvent.clientX, minWidth, maxWidth),
+        );
+      };
+
+      const stopResize = () => {
+        window.removeEventListener('mousemove', resize);
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+      };
+
+      window.addEventListener('mousemove', resize);
+      window.addEventListener('mouseup', stopResize, { once: true });
+      resize(event.nativeEvent);
+    },
+    [],
+  );
+
   return (
-    <div className={styles.workspace}>
-      <div className={styles.shell}>
-        <TreeToolbar
-          treeId={treeId}
-          tree={tree}
-          searchQuery={searchQuery}
-          searchResults={searchResults}
-          searching={searching}
-          ancestors={ancestors}
-          descendants={descendants}
-          includeSiblings={includeSiblings}
-          includeSpouses={includeSpouses}
-          onSearchQueryChange={setSearchQuery}
-          onSearch={runSearch}
-          onPickSearchResult={pickSearchResult}
-          onAncestorsChange={(value) => setAncestors(clamp(value, 0, 12))}
-          onDescendantsChange={(value) => setDescendants(clamp(value, 0, 12))}
-          onIncludeSiblingsChange={setIncludeSiblings}
-          onIncludeSpousesChange={setIncludeSpouses}
-          onRefresh={() => {
-            setNotice(null);
-            loadTree(rootPersonId);
-          }}
+    <TreeWorkspaceProvider value={workspaceContext}>
+      <div className={styles.workspace}>
+        <div
+          ref={shellRef}
+          className={styles.shell}
+          style={{ '--inspector-width': `${inspectorWidth}px` } as CSSProperties}
+        >
+          <TreeToolbar
+            treeId={treeId}
+            tree={tree}
+            searchQuery={searchQuery}
+            searchResults={searchResults}
+            searching={searching}
+            ancestors={ancestors}
+            descendants={descendants}
+            includeSiblings={includeSiblings}
+            includeSpouses={includeSpouses}
+            onSearchQueryChange={setSearchQuery}
+            onSearch={runSearch}
+            onPickSearchResult={pickSearchResult}
+            onAncestorsChange={(value) => setAncestors(clamp(value, 0, 12))}
+            onDescendantsChange={(value) => setDescendants(clamp(value, 0, 12))}
+            onIncludeSiblingsChange={setIncludeSiblings}
+            onIncludeSpousesChange={setIncludeSpouses}
+            onOpenDirectory={() => setDirectoryOpen(true)}
+            onRefresh={() => {
+              setNotice(null);
+              loadTree(rootPersonId);
+            }}
+          />
+
+          <TreeCanvas
+            tree={tree}
+            rootPersonId={rootPersonId}
+            selectedPersonId={selectedPersonId}
+            onSelectPerson={setSelectedPersonId}
+            onFocusPerson={(personId) => loadTree(personId, personId)}
+            onRequestAddRelative={(personId) => requestAddRelative(personId)}
+          />
+
+          <button
+            type="button"
+            className={styles.inspectorResizeHandle}
+            aria-label="Redimensionner l'inspecteur"
+            title="Redimensionner l'inspecteur"
+            onMouseDown={beginInspectorResize}
+          />
+
+          <PersonInspector
+            tree={tree}
+            selectedPersonId={selectedPersonId}
+            token={token}
+            onSaved={(personId) => loadTree(rootPersonId, personId)}
+            onRootChange={(personId) => loadTree(personId, personId)}
+            onRequestAddRelative={(personId) => requestAddRelative(personId)}
+            onRequestDeleteBranch={setDeleteTarget}
+          />
+        </div>
+
+        {loading ? (
+          <div className={styles.canvasStatus}>
+            <span className={styles.statusPill}>Chargement...</span>
+          </div>
+        ) : null}
+        {error ? (
+          <div className={styles.candidate}>{error}</div>
+        ) : null}
+        {notice ? (
+          <div className={styles.workspaceNotice}>
+            <span>{notice}</span>
+            <button type="button" onClick={() => setNotice(null)}>
+              Fermer
+            </button>
+          </div>
+        ) : null}
+
+        <BranchDeleteDialog
+          open={Boolean(deleteTarget)}
+          person={deleteTarget}
+          token={token}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={reloadAfterDelete}
         />
 
-        <TreeCanvas
-          tree={tree}
-          rootPersonId={rootPersonId}
+        <TreeDirectoryDialog
+          open={directoryOpen}
+          treeId={treeId}
           selectedPersonId={selectedPersonId}
+          onClose={() => setDirectoryOpen(false)}
           onSelectPerson={setSelectedPersonId}
           onFocusPerson={(personId) => loadTree(personId, personId)}
         />
 
-        <PersonInspector
-          tree={tree}
-          selectedPersonId={selectedPersonId}
+        <AddRelativeModal
+          open={Boolean(relativeRequest)}
+          treeId={treeId}
           token={token}
-          onSaved={(personId) => loadTree(rootPersonId, personId)}
-          onRootChange={(personId) => loadTree(personId, personId)}
-          onRequestDeleteBranch={setDeleteTarget}
+          anchorPerson={relativeAnchorPerson}
+          initialLinkType={relativeRequest?.linkType || null}
+          onClose={() => setRelativeRequest(null)}
+          onCreated={reloadAfterRelativeCreated}
         />
       </div>
-
-      {loading ? (
-        <div className={styles.canvasStatus}>
-          <span className={styles.statusPill}>Chargement...</span>
-        </div>
-      ) : null}
-      {error ? (
-        <div className={styles.candidate}>{error}</div>
-      ) : null}
-      {notice ? (
-        <div className={styles.workspaceNotice}>
-          <span>{notice}</span>
-          <button type="button" onClick={() => setNotice(null)}>
-            Fermer
-          </button>
-        </div>
-      ) : null}
-
-      <BranchDeleteDialog
-        open={Boolean(deleteTarget)}
-        person={deleteTarget}
-        token={token}
-        onClose={() => setDeleteTarget(null)}
-        onDeleted={reloadAfterDelete}
-      />
-    </div>
+    </TreeWorkspaceProvider>
   );
 }
 

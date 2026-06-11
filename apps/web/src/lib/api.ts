@@ -77,6 +77,26 @@ export const personApi = {
       token,
     }),
 
+  createRelative: (
+    anchorPersonId: string,
+    data: {
+      linkType: 'FATHER' | 'MOTHER' | 'SPOUSE' | 'CHILD';
+      person: {
+        givenNames: string;
+        usageSurname?: string | null;
+        birthDate?: string | null;
+        birthPlace?: string | null;
+      };
+    },
+    token: string,
+    treeId = DEFAULT_TREE_ID,
+  ) =>
+    apiFetch<any>(appendTreeId(`/persons/${anchorPersonId}/relatives`, treeId), {
+      method: 'POST',
+      body: JSON.stringify(data),
+      token,
+    }),
+
   update: (id: string, data: any, token: string, treeId = DEFAULT_TREE_ID) =>
     apiFetch<any>(appendTreeId(`/persons/${id}`, treeId), {
       method: 'PATCH',

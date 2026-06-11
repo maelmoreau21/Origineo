@@ -7,6 +7,7 @@ import {
   fitViewToBounds,
   zoomViewAroundViewportCenter,
 } from './canvas-view';
+import { useTreeWorkspaceMode } from './TreeWorkspaceContext';
 import styles from './TreeWorkspace.module.css';
 import { formatLife, personLabel, TreeWindow } from './types';
 
@@ -16,6 +17,7 @@ type Props = {
   selectedPersonId: string | null;
   onSelectPerson: (personId: string) => void;
   onFocusPerson: (personId: string) => void | Promise<void>;
+  onRequestAddRelative: (personId: string) => void;
 };
 
 export default function TreeCanvas({
@@ -24,7 +26,9 @@ export default function TreeCanvas({
   selectedPersonId,
   onSelectPerson,
   onFocusPerson,
+  onRequestAddRelative,
 }: Props) {
+  const { isReadOnly } = useTreeWorkspaceMode();
   const viewportRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 0.9 });
   const dragRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(
@@ -103,7 +107,7 @@ export default function TreeCanvas({
 
   if (!tree || !layout) {
     return (
-      <section className={styles.canvasPane}>
+      <section className={`${styles.canvasPane} ${isReadOnly ? styles.canvasPaneReadOnly : ''}`}>
         <div className={styles.emptyState}>
           <div>
             <strong>Aucun arbre charge</strong>
@@ -111,18 +115,20 @@ export default function TreeCanvas({
               Importez un GEDCOM pour creer l arbre, ou choisissez une personne
               avec la recherche.
             </p>
-            <div className={styles.emptyActions}>
-              <a className={`${styles.button} ${styles.primaryButton}`} href="/tree-settings?tab=gedcom">
-                Gestion GEDCOM
-              </a>
-            </div>
+            {!isReadOnly ? (
+              <div className={styles.emptyActions}>
+                <a className={`${styles.button} ${styles.primaryButton}`} href="/tree-settings?tab=gedcom">
+                  Gestion GEDCOM
+                </a>
+              </div>
+            ) : null}
           </div>
         </div>
       </section>
     );
   }
   return (
-    <section className={styles.canvasPane}>
+    <section className={`${styles.canvasPane} ${isReadOnly ? styles.canvasPaneReadOnly : ''}`}>
       <div
         ref={viewportRef}
         className={styles.canvasViewport}
@@ -195,9 +201,11 @@ export default function TreeCanvas({
             const person = node.datum.data.person as any;
             const selected = selectedPersonId === node.id;
             return (
-              <button
+              <div
                 key={node.tid}
                 data-person-card="true"
+                role="button"
+                tabIndex={0}
                 className={[
                   styles.personCard,
                   selected ? styles.personCardSelected : '',
@@ -221,8 +229,30 @@ export default function TreeCanvas({
                   onSelectPerson(node.id);
                   void onFocusPerson(node.id);
                 }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelectPerson(node.id);
+                }}
                 title="Double clic pour centrer l'arbre"
               >
+                {!isReadOnly ? (
+                  <button
+                    type="button"
+                    className={styles.personAddButton}
+                    title="Ajouter un proche"
+                    aria-label="Ajouter un proche"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelectPerson(node.id);
+                      onRequestAddRelative(node.id);
+                    }}
+                  >
+                    +
+                  </button>
+                ) : null}
                 <div className={styles.personName}>{personLabel(person)}</div>
                 <div className={styles.personMeta}>
                   {formatLife(person)}
@@ -237,7 +267,7 @@ export default function TreeCanvas({
                     {(node.datum.rels.children || []).length} enfants
                   </span>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>

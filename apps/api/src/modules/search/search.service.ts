@@ -8,15 +8,32 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 export interface SearchResult {
   id: string;
+  treeId: string;
+  usageSurname: string | null;
+  birthSurname: string | null;
+  givenNames: string;
+  firstName: string;
+  lastName: string | null;
+  gender: string;
+  birthDate: Date | null;
+  birthPlace: string | null;
+  birthPlaceId: string | null;
+  deathDate: Date | null;
+  deathPlace: string | null;
+  deathPlaceId: string | null;
+  professions: string[];
+  notes: string | null;
+  isRootDefault: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  similarity: number;
   usage_surname: string | null;
   birth_surname: string | null;
   given_names: string;
-  gender: string;
   birth_date: Date | null;
   birth_place: string | null;
   death_date: Date | null;
   death_place: string | null;
-  similarity: number;
 }
 
 export interface SearchFilters {
@@ -179,10 +196,33 @@ export class SearchService {
 
     const results = await this.prisma.$queryRaw<SearchResult[]>(Prisma.sql`
       SELECT
-        p.*,
+        p.id,
+        p.tree_id AS "treeId",
+        p.usage_surname AS "usageSurname",
+        p.birth_surname AS "birthSurname",
+        p.given_names AS "givenNames",
+        p.given_names AS "firstName",
+        COALESCE(p.usage_surname, p.birth_surname) AS "lastName",
+        p.gender::text AS gender,
+        p.birth_date AS "birthDate",
+        p.birth_place_id AS "birthPlaceId",
+        CASE WHEN bp.id IS NULL THEN NULL ELSE ${birthPlaceSql} END AS "birthPlace",
+        p.death_date AS "deathDate",
+        p.death_place_id AS "deathPlaceId",
+        CASE WHEN dp.id IS NULL THEN NULL ELSE ${deathPlaceSql} END AS "deathPlace",
+        p.professions,
+        p.notes,
+        p.is_root_default AS "isRootDefault",
+        p.created_at AS "createdAt",
+        p.updated_at AS "updatedAt",
+        p.usage_surname AS usage_surname,
+        p.birth_surname AS birth_surname,
+        p.given_names AS given_names,
+        p.birth_date AS birth_date,
         CASE WHEN bp.id IS NULL THEN NULL ELSE ${birthPlaceSql} END AS birth_place,
+        p.death_date AS death_date,
         CASE WHEN dp.id IS NULL THEN NULL ELSE ${deathPlaceSql} END AS death_place,
-        ${similarityExpression} AS similarity
+        ${similarityExpression} AS "similarity"
       FROM persons p
       LEFT JOIN places bp ON bp.id = p.birth_place_id
       LEFT JOIN places dp ON dp.id = p.death_place_id

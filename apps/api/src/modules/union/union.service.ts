@@ -8,13 +8,20 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateUnionDto, UpdateUnionDto } from './dto/union.dto';
+import {
+  AttachUnionDocumentDto,
+  CreateSpouseUnionDto,
+  CreateUnionDto,
+  UpdateUnionDto,
+} from './dto/union.dto';
 
 @Injectable()
 export class UnionService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateUnionDto) {
+    await this.assertTreeExists(dto.treeId);
+
     if (dto.partner1Id === dto.partner2Id) {
       throw new BadRequestException('A person cannot form a union with themselves');
     }
@@ -49,6 +56,71 @@ export class UnionService {
       include: {
         partner1: true,
         partner2: true,
+      },
+    });
+  }
+
+  async createForPerson(treeId: string, personId: string, dto: CreateSpouseUnionDto) {
+    return this.create({
+      treeId,
+      partner1Id: personId,
+      partner2Id: dto.partnerId,
+      type: dto.type,
+      startDate: dto.startDate,
+      startPlace: dto.startPlace,
+      endDate: dto.endDate,
+      endReason: dto.endReason,
+      notes: dto.notes,
+    });
+  }
+
+  async attachDocument(
+    treeId: string,
+    unionId: string,
+    dto: AttachUnionDocumentDto,
+  ) {
+    const [union, document] = await Promise.all([
+      this.prisma.union.findFirst({
+        where: { id: unionId, treeId },
+        select: { id: true },
+      }),
+      this.prisma.document.findFirst({
+        where: {
+          id: dto.documentId,
+          OR: [
+            { person: { is: { treeId } } },
+            { union: { is: { treeId } } },
+          ],
+        },
+        select: {
+          id: true,
+          personId: true,
+          unionId: true,
+        },
+      }),
+    ]);
+
+    if (!union) {
+      throw new NotFoundException(`Union with ID "${unionId}" not found`);
+    }
+
+    if (!document) {
+      throw new NotFoundException(`Document with ID "${dto.documentId}" not found in this tree`);
+    }
+
+    return this.prisma.document.update({
+      where: { id: dto.documentId },
+      data: {
+        personId: null,
+        unionId,
+      },
+      include: {
+        union: {
+          include: {
+            partner1: true,
+            partner2: true,
+          },
+        },
       },
     });
   }
@@ -138,6 +210,17 @@ export class UnionService {
   async remove(treeId: string, id: string) {
     await this.findOne(treeId, id);
     return this.prisma.union.delete({ where: { id } });
+  }
+
+  private async assertTreeExists(treeId: string) {
+    const tree = await this.prisma.tree.findUnique({
+      where: { id: treeId },
+      select: { id: true },
+    });
+
+    if (!tree) {
+      throw new NotFoundException(`Tree with ID "${treeId}" not found`);
+    }
   }
 
   private validateUnionChronology(

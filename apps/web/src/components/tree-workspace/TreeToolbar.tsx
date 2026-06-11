@@ -1,6 +1,7 @@
 'use client';
 
-import { FormEvent } from 'react';
+import { type FormEvent, type MouseEvent } from 'react';
+import { useTreeWorkspaceMode } from './TreeWorkspaceContext';
 import styles from './TreeWorkspace.module.css';
 import { personLabel, TreeWindow } from './types';
 
@@ -21,6 +22,7 @@ type Props = {
   onDescendantsChange: (value: number) => void;
   onIncludeSiblingsChange: (value: boolean) => void;
   onIncludeSpousesChange: (value: boolean) => void;
+  onOpenDirectory: () => void;
   onRefresh: () => void;
 };
 
@@ -41,14 +43,22 @@ export default function TreeToolbar({
   onDescendantsChange,
   onIncludeSiblingsChange,
   onIncludeSpousesChange,
+  onOpenDirectory,
   onRefresh,
 }: Props) {
   const stats = tree?.stats;
   const encodedTreeId = encodeURIComponent(treeId);
+  const { mode, setMode, isReadOnly } = useTreeWorkspaceMode();
+  const modeLabel = isReadOnly ? 'Consultation' : 'Modification';
 
   function submit(event: FormEvent) {
     event.preventDefault();
     onSearch();
+  }
+
+  function preventReadOnlyNavigation(event: MouseEvent<HTMLAnchorElement>) {
+    if (!isReadOnly) return;
+    event.preventDefault();
   }
 
   function applyViewPreset(
@@ -106,10 +116,38 @@ export default function TreeToolbar({
       </form>
 
       <div className={styles.toolbarCluster}>
-        <a className={styles.button} href={`/tree-settings?tab=people&treeId=${encodedTreeId}`}>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={mode === 'modification'}
+          className={`${styles.modeSwitch} ${mode === 'modification' ? styles.modeSwitchActive : ''}`}
+          onClick={() =>
+            setMode((current) =>
+              current === 'consultation' ? 'modification' : 'consultation',
+            )
+          }
+          title={`Mode ${modeLabel}`}
+        >
+          <span className={styles.modeSwitchTrack} aria-hidden="true">
+            <span className={styles.modeSwitchThumb} />
+          </span>
+          <span className={styles.modeSwitchText}>{modeLabel}</span>
+        </button>
+        <button
+          className={styles.button}
+          type="button"
+          onClick={onOpenDirectory}
+        >
           Annuaire
-        </a>
-        <a className={styles.button} href={`/tree-settings?tab=gedcom&treeId=${encodedTreeId}`}>
+        </button>
+        <a
+          className={`${styles.button} ${isReadOnly ? styles.buttonDisabled : ''}`}
+          href={`/tree-settings?tab=gedcom&treeId=${encodedTreeId}`}
+          aria-disabled={isReadOnly}
+          tabIndex={isReadOnly ? -1 : undefined}
+          onClick={preventReadOnlyNavigation}
+          title={isReadOnly ? 'Passez en mode Modification pour ouvrir la gestion' : undefined}
+        >
           Gestion
         </a>
         <details className={styles.viewMenu}>

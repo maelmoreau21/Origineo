@@ -70,3 +70,45 @@ export class CreateUnionDto {
 }
 
 export class UpdateUnionDto extends PartialType(CreateUnionDto) {}
+
+export class CreateSpouseUnionDto {
+  @ApiProperty({ description: 'UUID of the partner to associate with the route person' })
+  @IsUUID()
+  partnerId: string;
+
+  @ApiPropertyOptional({ enum: UnionType, default: UnionType.MARRIAGE })
+  @IsOptional()
+  @IsEnum(UnionType)
+  type?: UnionType;
+
+  @ApiPropertyOptional({ example: '1975-06-21' })
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional({ example: 'Paris, France' })
+  @IsOptional()
+  @IsString()
+  startPlace?: string;
+
+  @ApiPropertyOptional({ example: '1990-01-15' })
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @ApiPropertyOptional({ enum: UnionEndReason })
+  @IsOptional()
+  @IsEnum(UnionEndReason)
+  endReason?: UnionEndReason;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class AttachUnionDocumentDto {
+  @ApiProperty({ description: 'UUID of the document to attach to this union' })
+  @IsUUID()
+  documentId: string;
+}
