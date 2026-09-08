@@ -10,7 +10,7 @@
 - **Stockage de documents** — Upload de photos et actes (dossiers UUID par personne/couple)
 - **Recherche fuzzy** — Recherche par trigrammes (pg_trgm) sur les noms
 - **Calcul de parenté** — BFS bidirectionnel pour trouver le chemin entre deux personnes
-- **Auth JWT** — Rôles ADMIN / VISITOR avec guards NestJS
+- **Authentification moderne** — SSO OpenID Connect (OIDC: Authentik, Keycloak, Authelia, Google...) & Compte local configurable via Docker Compose
 - **Dark theme premium** — Design système glassmorphism avec des micro-animations
 
 ## 🏗️ Stack Technique
@@ -90,9 +90,10 @@ pnpm run dev
 - **Swagger** : http://localhost:3001/api
 - **Frontend** : http://localhost:3000
 
-### 6. Premier utilisateur
+### 6. Authentification & Premier accès
 
-Le premier utilisateur enregistré via `/admin` obtient automatiquement le rôle **ADMIN**.
+- **Compte local** : configuré via les variables `LOCAL_ADMIN_EMAIL` (`admin@origineo.local`) et `LOCAL_ADMIN_PASSWORD` (`admin123456`) dans `docker-compose.yml` ou `.env`.
+- **SSO OIDC** : connectez votre fournisseur d'identité préféré (Authentik, Keycloak, Authelia, Google, Azure AD) simplement en renseignant `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` et `OIDC_CLIENT_SECRET`. Le bouton SSO apparaîtra automatiquement sur la page de connexion `/admin`.
 
 ---
 

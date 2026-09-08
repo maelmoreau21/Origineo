@@ -1,9 +1,8 @@
 // ══════════════════════════════════════
-// Auth DTOs
+// Origineo — Auth DTOs
 // ══════════════════════════════════════
 
 import {
-  IsArray,
   IsBoolean,
   IsEnum,
   IsOptional,
@@ -18,26 +17,26 @@ enum ManagedUserRole {
 }
 
 export class LoginDto {
-  @ApiProperty({ example: 'root' })
+  @ApiProperty({ example: 'admin@origineo.local' })
   @IsString()
   identifier: string;
 
-  @ApiProperty({ example: 'root' })
+  @ApiProperty({ example: 'admin123456' })
   @IsString()
   password: string;
 }
 
 export class CreateManagedUserDto {
-  @ApiProperty({ example: 'admin' })
+  @ApiProperty({ example: 'jean.dupont@example.com' })
   @IsString()
   identifier: string;
 
-  @ApiProperty({ example: 'securePassword123' })
+  @ApiProperty({ example: 'MotDePasseSecurise123' })
   @IsString()
   @MinLength(8)
   password: string;
 
-  @ApiPropertyOptional({ example: 'Admin User' })
+  @ApiPropertyOptional({ example: 'Jean Dupont' })
   @IsOptional()
   @IsString()
   displayName?: string;
@@ -55,55 +54,7 @@ export class UpdateUserRoleDto {
 }
 
 export class UpdateUserStatusDto {
-  @ApiProperty({ default: true, description: 'Set false to deactivate the account, true to reactivate.' })
+  @ApiProperty({ default: true, description: 'Définir sur false pour désactiver le compte, true pour réactiver.' })
   @IsBoolean()
   active: boolean;
-}
-
-export class LdapConfigDto {
-  @ApiProperty({ default: false })
-  @IsBoolean()
-  enabled: boolean;
-
-  @ApiPropertyOptional({ example: 'ldap://ad.example.local:389' })
-  @IsOptional()
-  @IsString()
-  url?: string;
-
-  @ApiPropertyOptional({ example: 'CN=svc-origineo,OU=Service Accounts,DC=example,DC=local' })
-  @IsOptional()
-  @IsString()
-  bindDn?: string;
-
-  @ApiPropertyOptional({ example: 'superSecretBindPassword' })
-  @IsOptional()
-  @IsString()
-  bindPassword?: string;
-
-  @ApiPropertyOptional({ example: 'OU=Users,DC=example,DC=local' })
-  @IsOptional()
-  @IsString()
-  userSearchBase?: string;
-
-  @ApiPropertyOptional({ example: '(|(sAMAccountName={{username}})(mail={{username}}))' })
-  @IsOptional()
-  @IsString()
-  userSearchFilter?: string;
-
-  @ApiPropertyOptional({ example: 'memberOf', default: 'memberOf' })
-  @IsOptional()
-  @IsString()
-  groupAttribute?: string;
-
-  @ApiPropertyOptional({ type: [String], example: ['CN=Origineo_Admins,OU=Groups,DC=example,DC=local'] })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  adminGroupDns?: string[];
-
-  @ApiPropertyOptional({ type: [String], example: ['CN=Origineo_Users,OU=Groups,DC=example,DC=local'] })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  userGroupDns?: string[];
 }

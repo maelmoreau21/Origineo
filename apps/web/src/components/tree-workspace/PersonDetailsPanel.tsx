@@ -695,7 +695,7 @@ function EmptyInline({ text }: { text: string }) {
 
 function initials(person: Person) {
   return [person.givenNames, person.usageSurname || person.birthSurname]
-    .filter(Boolean)
+    .filter((part): part is string => Boolean(part && part.trim()))
     .flatMap((part) => part.trim().split(/\s+/))
     .map((part) => part[0])
     .join('')

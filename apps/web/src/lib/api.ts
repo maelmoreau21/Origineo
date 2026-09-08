@@ -328,6 +328,19 @@ export const eventApi = {
       token,
     }),
 
+  update: (id: string, data: any, token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/events/${id}`, treeId), {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+      token,
+    }),
+
+  delete: (id: string, token: string, treeId = DEFAULT_TREE_ID) =>
+    apiFetch<any>(appendTreeId(`/events/${id}`, treeId), {
+      method: 'DELETE',
+      token,
+    }),
+
   attachParticipant: (
     eventId: string,
     data: { personId: string; role: string },
@@ -413,15 +426,8 @@ export const authApi = {
       token,
     }),
 
-  getLdapConfig: (token: string) =>
-    apiFetch<any>('/auth/ldap/config', { token }),
-
-  updateLdapConfig: (data: any, token: string) =>
-    apiFetch<any>('/auth/ldap/config', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      token,
-    }),
+  getOidcConfig: () =>
+    apiFetch<{ success: boolean; data: { enabled: boolean; buttonLabel: string; loginUrl: string } }>('/auth/oidc/config'),
 };
 
 // ─── GEDCOM API ──────────────────────────────

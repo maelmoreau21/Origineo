@@ -272,63 +272,105 @@ export default function TreeCanvas({
           })}
         </div>
 
-        <div className={styles.canvasStatus}>
-          <span className={styles.statusPill}>
-            {tree.stats?.visiblePersons || tree.nodes.length} personnes visibles
+        {/* Minimal Floating Status Badge (Bottom-Left) */}
+        <div className={styles.modernCanvasStatus}>
+          <span className={styles.modernStatusPill}>
+            {tree.stats?.visiblePersons || tree.nodes.length} personnes • {tree.unions.length} unions
+            {tree.stats?.truncated ? ` (limité à ${tree.stats.limit})` : ''}
           </span>
-          <span className={styles.statusPill}>
-            {tree.relationships.length} liens parent-enfant
-          </span>
-          <span className={styles.statusPill}>
-            {tree.unions.length} unions
-          </span>
-          {tree.stats?.truncated ? (
-            <span className={styles.statusPill}>
-              Fenetre limitee a {tree.stats.limit}
-            </span>
-          ) : null}
         </div>
 
-        <div className={styles.zoomControls}>
+        {/* Floating Zoom & Navigation Dock (Bottom-Right) */}
+        <div className={styles.modernZoomDock} data-canvas-control="true">
           <button
-            className={styles.iconButton}
+            type="button"
+            className={styles.dockIconButton}
             data-canvas-control="true"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              zoomBy(-0.12);
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              zoomBy(-0.15);
             }}
-            title="Zoom arriere"
+            title="Zoom arrière (Molette bas)"
           >
-            -
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
           </button>
-          <span className={styles.zoomValue} data-canvas-control="true">
+
+          <button
+            type="button"
+            className={styles.dockZoomValue}
+            data-canvas-control="true"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              centerOnPerson(selectedPersonId || rootPersonId, 1.0);
+            }}
+            title="Réinitialiser le zoom à 100%"
+          >
             {Math.round(view.scale * 100)}%
-          </span>
-          <button
-            className={styles.iconButton}
-            data-canvas-control="true"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              zoomBy(0.12);
-            }}
-            title="Zoom avant"
-          >
-            +
           </button>
+
           <button
-            className={styles.button}
+            type="button"
+            className={styles.dockIconButton}
             data-canvas-control="true"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              zoomBy(0.15);
+            }}
+            title="Zoom avant (Molette haut)"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+
+          <div className={styles.dockDivider} />
+
+          <button
+            type="button"
+            className={styles.dockActionButton}
+            data-canvas-control="true"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
               fitTree();
             }}
-            title="Afficher tout l'arbre visible"
+            title="Ajuster la vue pour voir tout l'arbre visible"
           >
-            Ajuster
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 3 21 3 21 9" />
+              <polyline points="9 21 3 21 3 15" />
+              <line x1="21" y1="3" x2="14" y2="10" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+            <span>Ajuster</span>
           </button>
+
+          {rootPersonId ? (
+            <button
+              type="button"
+              className={styles.dockActionButton}
+              data-canvas-control="true"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                centerOnPerson(rootPersonId, 0.92);
+                if (rootPersonId) onSelectPerson(rootPersonId);
+              }}
+              title="Centrer sur la personne racine de l'arbre"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              <span>Racine</span>
+            </button>
+          ) : null}
         </div>
       </div>
     </section>

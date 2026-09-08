@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
@@ -27,7 +28,9 @@ export class EventParticipantInputDto {
 
 export class CreateEventDto {
   @ApiProperty({ description: 'UUID of the tree this event belongs to' })
-  @IsUUID()
+  @Matches(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, {
+    message: 'treeId must be a UUID',
+  })
   treeId: string;
 
   @ApiProperty({

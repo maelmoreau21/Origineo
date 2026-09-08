@@ -12,6 +12,18 @@ export default function SessionGate({ children }: { children: React.ReactNode })
   const isAdminRoute = useMemo(() => pathname?.startsWith('/admin') ?? false, [pathname]);
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const queryToken = urlParams.get('token');
+      if (queryToken) {
+        window.localStorage.setItem('origineo_token', queryToken);
+        urlParams.delete('token');
+        const remainingQuery = urlParams.toString();
+        const cleanUrl = window.location.pathname + (remainingQuery ? `?${remainingQuery}` : '');
+        window.history.replaceState({}, document.title, cleanUrl);
+      }
+    }
+
     if (isAdminRoute) {
       setAllowed(true);
       return;

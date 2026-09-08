@@ -17,7 +17,7 @@ import {
 } from '@/lib/api';
 import AddRelativeModal, { RelativeLinkType } from './AddRelativeModal';
 import BranchDeleteDialog from './BranchDeleteDialog';
-import PersonInspector from './PersonInspector';
+import PersonDetailDrawer from './PersonDetailDrawer';
 import TreeCanvas from './TreeCanvas';
 import TreeDirectoryDialog from './TreeDirectoryDialog';
 import TreeToolbar from './TreeToolbar';
@@ -26,13 +26,14 @@ import {
   TreeWorkspaceProvider,
 } from './TreeWorkspaceContext';
 import styles from './TreeWorkspace.module.css';
-import { Person, TreeWindow } from './types';
+import { Person, personLabel, TreeWindow } from './types';
 
 export default function TreeWorkspace() {
   const treeId = DEFAULT_TREE_ID;
   const [token, setToken] = useState<string | null>(null);
   const [rootPersonId, setRootPersonId] = useState<string | null>(null);
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(true);
   const [tree, setTree] = useState<TreeWindow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,8 +52,6 @@ export default function TreeWorkspace() {
     linkType?: RelativeLinkType | null;
   } | null>(null);
   const [mode, setMode] = useState<TreeWorkspaceMode>('modification');
-  const [inspectorWidth, setInspectorWidth] = useState(380);
-  const shellRef = useRef<HTMLDivElement>(null);
 
   const workspaceContext = useMemo(
     () => ({
@@ -206,48 +205,10 @@ export default function TreeWorkspace() {
     }
   }
 
-  const beginInspectorResize = useCallback(
-    (event: ReactMouseEvent<HTMLButtonElement>) => {
-      event.preventDefault();
-
-      const shellRect = shellRef.current?.getBoundingClientRect();
-      if (!shellRect) return;
-
-      const minWidth = 300;
-      const maxWidth = Math.min(680, Math.max(minWidth, shellRect.width - 420));
-      const previousCursor = document.body.style.cursor;
-      const previousUserSelect = document.body.style.userSelect;
-
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-
-      const resize = (moveEvent: MouseEvent) => {
-        setInspectorWidth(
-          clamp(shellRect.right - moveEvent.clientX, minWidth, maxWidth),
-        );
-      };
-
-      const stopResize = () => {
-        window.removeEventListener('mousemove', resize);
-        document.body.style.cursor = previousCursor;
-        document.body.style.userSelect = previousUserSelect;
-      };
-
-      window.addEventListener('mousemove', resize);
-      window.addEventListener('mouseup', stopResize, { once: true });
-      resize(event.nativeEvent);
-    },
-    [],
-  );
-
   return (
     <TreeWorkspaceProvider value={workspaceContext}>
       <div className={styles.workspace}>
-        <div
-          ref={shellRef}
-          className={styles.shell}
-          style={{ '--inspector-width': `${inspectorWidth}px` } as CSSProperties}
-        >
+        <div className={styles.modernShell}>
           <TreeToolbar
             treeId={treeId}
             tree={tree}
@@ -272,32 +233,55 @@ export default function TreeWorkspace() {
             }}
           />
 
-          <TreeCanvas
-            tree={tree}
-            rootPersonId={rootPersonId}
-            selectedPersonId={selectedPersonId}
-            onSelectPerson={setSelectedPersonId}
-            onFocusPerson={(personId) => loadTree(personId, personId)}
-            onRequestAddRelative={(personId) => requestAddRelative(personId)}
-          />
+          <div className={styles.canvasWrapper}>
+            <TreeCanvas
+              tree={tree}
+              rootPersonId={rootPersonId}
+              selectedPersonId={selectedPersonId}
+              onSelectPerson={(personId) => {
+                setSelectedPersonId(personId);
+                setIsDrawerOpen(true);
+              }}
+              onFocusPerson={(personId) => loadTree(personId, personId)}
+              onRequestAddRelative={(personId) => requestAddRelative(personId)}
+            />
 
-          <button
-            type="button"
-            className={styles.inspectorResizeHandle}
-            aria-label="Redimensionner l'inspecteur"
-            title="Redimensionner l'inspecteur"
-            onMouseDown={beginInspectorResize}
-          />
+            {/* Floating button to reopen drawer when closed */}
+            {!isDrawerOpen && selectedPerson ? (
+              <button
+                type="button"
+                className={styles.drawerReopenButton}
+                onClick={() => setIsDrawerOpen(true)}
+                title="Ouvrir la fiche de la personne selectionnee"
+              >
+                <span className={styles.reopenAvatar}>
+                  {selectedPerson.gender === 'MALE' ? '♂' : selectedPerson.gender === 'FEMALE' ? '♀' : '👤'}
+                </span>
+                <span className={styles.reopenName}>{personLabel(selectedPerson)}</span>
+                <span className={styles.reopenAction}>Fiche ➔</span>
+              </button>
+            ) : null}
 
-          <PersonInspector
-            tree={tree}
-            selectedPersonId={selectedPersonId}
-            token={token}
-            onSaved={(personId) => loadTree(rootPersonId, personId)}
-            onRootChange={(personId) => loadTree(personId, personId)}
-            onRequestAddRelative={(personId) => requestAddRelative(personId)}
-            onRequestDeleteBranch={setDeleteTarget}
-          />
+            <PersonDetailDrawer
+              tree={tree}
+              selectedPersonId={selectedPersonId}
+              isOpen={isDrawerOpen && Boolean(selectedPersonId)}
+              token={token}
+              isReadOnly={mode === 'consultation'}
+              onClose={() => setIsDrawerOpen(false)}
+              onCenter={(personId) => {
+                setSelectedPersonId(personId);
+                loadTree(rootPersonId, personId);
+              }}
+              onSelectRelative={(personId) => {
+                setSelectedPersonId(personId);
+                setIsDrawerOpen(true);
+              }}
+              onRequestAddRelative={(personId, linkType) => requestAddRelative(personId, linkType)}
+              onRequestDelete={(person) => setDeleteTarget(person)}
+              onPersonUpdated={(personId) => loadTree(rootPersonId, personId)}
+            />
+          </div>
         </div>
 
         {loading ? (

@@ -1,5 +1,5 @@
 // ══════════════════════════════════════
-// Auth Controller
+// Origineo — Auth Controller
 // ══════════════════════════════════════
 
 import {
@@ -10,14 +10,17 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Request,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { AuthService } from './auth.service';
+import { OidcService } from './oidc.service';
 import {
   CreateManagedUserDto,
-  LdapConfigDto,
   LoginDto,
   UpdateUserRoleDto,
   UpdateUserStatusDto,
@@ -30,11 +33,14 @@ import { Roles } from '../../common/decorators/roles.decorator';
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly oidcService: OidcService,
+  ) {}
 
   @Public()
   @Post('login')
-  @ApiOperation({ summary: 'Authenticate and receive JWT token' })
+  @ApiOperation({ summary: 'Connexion locale et génération de token JWT' })
   async login(@Body() dto: LoginDto) {
     return {
       success: true,
@@ -42,10 +48,56 @@ export class AuthController {
     };
   }
 
+  @Public()
+  @Get('oidc/config')
+  @ApiOperation({ summary: 'Obtenir la configuration OIDC SSO' })
+  async getOidcConfig() {
+    return {
+      success: true,
+      data: await this.oidcService.getConfig(),
+    };
+  }
+
+  @Public()
+  @Get('oidc/login')
+  @ApiOperation({ summary: 'Redirection vers le fournisseur SSO OIDC' })
+  async oidcLogin(@Res() res: Response) {
+    const authUrl = await this.oidcService.getAuthorizationUrl();
+    return res.redirect(302, authUrl);
+  }
+
+  @Public()
+  @Get('oidc/callback')
+  @ApiOperation({ summary: 'Callback d’authentification SSO OIDC' })
+  async oidcCallback(
+    @Query('code') code: string,
+    @Query('state') state: string,
+    @Query('error') error: string,
+    @Query('error_description') errorDescription: string,
+    @Res() res: Response,
+  ) {
+    const frontendUrl = this.oidcService.getFrontendUrl();
+
+    if (error) {
+      const message = encodeURIComponent(errorDescription || error);
+      return res.redirect(302, `${frontendUrl}/admin?error=${message}`);
+    }
+
+    try {
+      const user = await this.oidcService.handleCallback(code, state);
+      const token = this.authService.generateToken(user.id, user.email, user.role);
+
+      return res.redirect(302, `${frontendUrl}/admin?token=${encodeURIComponent(token)}`);
+    } catch (err: any) {
+      const message = encodeURIComponent(err.message || 'Échec de la connexion SSO');
+      return res.redirect(302, `${frontendUrl}/admin?error=${message}`);
+    }
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('me')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current user profile' })
+  @ApiOperation({ summary: 'Profil de l’utilisateur connecté' })
   async getProfile(@Request() req: any) {
     return {
       success: true,
@@ -57,11 +109,11 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create a managed user (root only)' })
+  @ApiOperation({ summary: 'Créer un utilisateur (admin)' })
   async createManagedUser(@Request() req: any, @Body() dto: CreateManagedUserDto) {
     return {
       success: true,
-      data: await this.authService.createManagedUser(req.user.email, dto),
+      data: await this.authService.createManagedUser(req.user.role, dto),
     };
   }
 
@@ -69,11 +121,11 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'List managed users (root only)' })
+  @ApiOperation({ summary: 'Lister les utilisateurs (admin)' })
   async listManagedUsers(@Request() req: any) {
     return {
       success: true,
-      data: await this.authService.listManagedUsers(req.user.email),
+      data: await this.authService.listManagedUsers(req.user.role),
     };
   }
 
@@ -81,7 +133,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update a managed user role (root only)' })
+  @ApiOperation({ summary: 'Mettre à jour le rôle d’un utilisateur (admin)' })
   async updateManagedUserRole(
     @Request() req: any,
     @Param('id') id: string,
@@ -90,7 +142,7 @@ export class AuthController {
     return {
       success: true,
       data: await this.authService.updateManagedUserRole(
-        req.user.email,
+        req.user.role,
         id,
         dto.role,
       ),
@@ -101,7 +153,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Activate/deactivate a managed user (root only)' })
+  @ApiOperation({ summary: 'Activer / désactiver un utilisateur (admin)' })
   async updateManagedUserStatus(
     @Request() req: any,
     @Param('id') id: string,
@@ -110,7 +162,7 @@ export class AuthController {
     return {
       success: true,
       data: await this.authService.updateManagedUserStatus(
-        req.user.email,
+        req.user.role,
         id,
         dto.active,
       ),
@@ -121,35 +173,11 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Delete a managed user (root only)' })
+  @ApiOperation({ summary: 'Supprimer un utilisateur (admin)' })
   async deleteManagedUser(@Request() req: any, @Param('id') id: string) {
     return {
       success: true,
-      data: await this.authService.deleteManagedUser(req.user.email, id),
-    };
-  }
-
-  @Get('ldap/config')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ADMIN')
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get LDAP configuration (root only)' })
-  async getLdapConfig(@Request() req: any) {
-    return {
-      success: true,
-      data: await this.authService.getLdapConfig(req.user.email),
-    };
-  }
-
-  @Post('ldap/config')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ADMIN')
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Set LDAP configuration (root only)' })
-  async updateLdapConfig(@Request() req: any, @Body() dto: LdapConfigDto) {
-    return {
-      success: true,
-      data: await this.authService.updateLdapConfig(req.user.email, dto),
+      data: await this.authService.deleteManagedUser(req.user.role, req.user.sub, id),
     };
   }
 }

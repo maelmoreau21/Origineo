@@ -115,6 +115,9 @@ describe('Route Security Matrix', () => {
   const routes = [
     // Public routes (no auth required)
     { path: 'POST /api/auth/login', auth: 'public' },
+    { path: 'GET /api/auth/oidc/config', auth: 'public' },
+    { path: 'GET /api/auth/oidc/login', auth: 'public' },
+    { path: 'GET /api/auth/oidc/callback', auth: 'public' },
 
     // JWT routes (authenticated users)
     { path: 'GET /api/auth/me', auth: 'jwt' },
@@ -150,17 +153,17 @@ describe('Route Security Matrix', () => {
     { path: 'POST /api/documents/upload', auth: 'admin' },
     { path: 'DELETE /api/documents/:id', auth: 'admin' },
 
-    // Root-managed routes (admin at guard level, root in service)
-    { path: 'POST /api/auth/users', auth: 'root' },
-    { path: 'GET /api/auth/users', auth: 'root' },
-    { path: 'PATCH /api/auth/users/:id/role', auth: 'root' },
-    { path: 'GET /api/auth/ldap/config', auth: 'root' },
-    { path: 'POST /api/auth/ldap/config', auth: 'root' },
+    // Admin user management routes
+    { path: 'POST /api/auth/users', auth: 'admin-users' },
+    { path: 'GET /api/auth/users', auth: 'admin-users' },
+    { path: 'PATCH /api/auth/users/:id/role', auth: 'admin-users' },
+    { path: 'PATCH /api/auth/users/:id/status', auth: 'admin-users' },
+    { path: 'DELETE /api/auth/users/:id', auth: 'admin-users' },
   ];
 
   it('should have correct number of public routes', () => {
     const publicRoutes = routes.filter((r) => r.auth === 'public');
-    expect(publicRoutes.length).toBe(1);
+    expect(publicRoutes.length).toBe(4);
   });
 
   it('should have correct number of authenticated JWT routes', () => {
@@ -173,15 +176,15 @@ describe('Route Security Matrix', () => {
     expect(adminRoutes.length).toBe(13);
   });
 
-  it('should have correct number of root-managed routes', () => {
-    const rootRoutes = routes.filter((r) => r.auth === 'root');
-    expect(rootRoutes.length).toBe(5);
+  it('should have correct number of admin-managed user routes', () => {
+    const userMgmtRoutes = routes.filter((r) => r.auth === 'admin-users');
+    expect(userMgmtRoutes.length).toBe(5);
   });
 
-  it('all routes except login should require authentication', () => {
-    const nonLoginRoutes = routes.filter((r) => r.path !== 'POST /api/auth/login');
+  it('all routes except public auth routes should require authentication', () => {
+    const nonPublicRoutes = routes.filter((r) => r.auth !== 'public');
 
-    for (const route of nonLoginRoutes) {
+    for (const route of nonPublicRoutes) {
       expect(route.auth, `${route.path} should not be public`).not.toBe('public');
     }
   });

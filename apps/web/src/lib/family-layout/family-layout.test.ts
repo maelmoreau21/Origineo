@@ -386,7 +386,7 @@ function person(
   id: string,
   givenNames: string,
   surname: string,
-  gender: PersonDto['gender'],
+  gender: any,
   generation: number,
 ): PersonDto & { generation: number } {
   return {

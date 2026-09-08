@@ -14,19 +14,36 @@ import {
   unionApi,
 } from '@/lib/api';
 
-type Tab = 'settings' | 'accounts' | 'login';
-
 export default function AdminPage() {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<Tab>('login');
   const [sessionRestoring, setSessionRestoring] = useState(true);
   const isAdminUser = user?.role === 'ADMIN';
-  const isRootUser = user?.isRoot === true;
 
-  // Try to restore session from localStorage
+  // Try to restore session from localStorage or URL token
   useEffect(() => {
     let isMounted = true;
+
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get('token');
+      const urlError = params.get('error');
+
+      if (urlError) {
+        alert(`Erreur SSO: ${urlError}`);
+        params.delete('error');
+        const remaining = params.toString();
+        window.history.replaceState({}, document.title, window.location.pathname + (remaining ? `?${remaining}` : ''));
+      }
+
+      if (urlToken) {
+        localStorage.setItem('origineo_token', urlToken);
+        params.delete('token');
+        const remaining = params.toString();
+        window.history.replaceState({}, document.title, window.location.pathname + (remaining ? `?${remaining}` : ''));
+      }
+    }
+
     const saved = localStorage.getItem('origineo_token');
     if (!saved) {
       setSessionRestoring(false);
@@ -43,13 +60,11 @@ export default function AdminPage() {
       }
 
       setUser(profile);
-      setActiveTab('accounts');
     }).catch(() => {
       if (!isMounted) return;
       localStorage.removeItem('origineo_token');
       setToken(null);
       setUser(null);
-      setActiveTab('login');
     }).finally(() => {
       if (isMounted) {
         setSessionRestoring(false);
@@ -73,8 +88,6 @@ export default function AdminPage() {
         window.location.href = '/';
         return;
       }
-
-      setActiveTab('accounts');
     } catch (err: any) {
       alert(err.message || 'Échec de la connexion');
     }
@@ -84,7 +97,6 @@ export default function AdminPage() {
     setToken(null);
     setUser(null);
     localStorage.removeItem('origineo_token');
-    setActiveTab('login');
   };
 
   return (
@@ -98,7 +110,7 @@ export default function AdminPage() {
               <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginTop: 'var(--space-1)' }}>
                 Connecté en tant que <strong>{user.displayName || user.email}</strong>
                 <span className="badge badge-accent" style={{ marginLeft: 'var(--space-2)' }}>{user.role}</span>
-                {isRootUser && <span className="badge badge-amber" style={{ marginLeft: 'var(--space-2)' }}>ROOT</span>}
+                {user.isLocalAdmin && <span className="badge badge-emerald" style={{ marginLeft: 'var(--space-2)' }}>ADMIN LOCAL</span>}
               </p>
             )}
           </div>
@@ -121,47 +133,27 @@ export default function AdminPage() {
           <LoginForm onLogin={handleLogin} />
         ) : !isAdminUser ? (
           <div className="glass-card" style={{ textAlign: 'center', maxWidth: 520, margin: '0 auto' }}>
-            <h3 style={{ marginBottom: 'var(--space-2)' }}>Acces admin requis</h3>
+            <h3 style={{ marginBottom: 'var(--space-2)' }}>Accès admin requis</h3>
             <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
               Ce compte n&apos;a pas les droits administrateur pour cette zone.
             </p>
             <a href="/" className="btn btn-secondary">
-              Retourner a l&apos;arbre
+              Retourner à l&apos;arbre
             </a>
           </div>
         ) : (
           <>
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-6)', borderBottom: '1px solid var(--color-border)', paddingBottom: 'var(--space-2)' }}>
-              {(
-                [
-                { key: 'settings', label: '⚙️ Paramètres' },
-                { key: 'accounts', label: '👤 Comptes' },
-              ] as { key: Tab; label: string }[]
-              ).map(({ key, label }) => (
-                <button
-                  key={key}
-                  className={`btn ${activeTab === key ? 'btn-primary' : 'btn-ghost'}`}
-                  onClick={() => setActiveTab(key)}
-                  id={`tab-${key}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
             <div className="glass-card" style={{ marginBottom: 'var(--space-6)' }}>
-              <h3 style={{ marginBottom: 'var(--space-2)' }}>🌳 Paramètres de l&apos;arbre déplacés</h3>
+              <h3 style={{ marginBottom: 'var(--space-2)' }}>🌳 Paramètres de l&apos;arbre</h3>
               <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
-                Toute la gestion de l&apos;arbre (import/export GED, fusion, suppressions, intégrité) est désormais dans un espace dédié.
+                La gestion de l&apos;arbre (import/export GEDCOM, fusion, dédoublonnage, intégrité) se trouve dans l&apos;espace dédié.
               </p>
               <a href="/tree-settings" className="btn btn-secondary">
                 Ouvrir les paramètres de l&apos;arbre
               </a>
             </div>
 
-            {activeTab === 'settings' && <SettingsPanel token={token} isRootUser={isRootUser} />}
-            {activeTab === 'accounts' && <AccountsPagePanel token={token} isRootUser={isRootUser} />}
+            <AccountsPanel token={token} />
           </>
         )}
       </div>
@@ -175,9 +167,22 @@ function LoginForm({
 }: {
   onLogin: (identifier: string, password: string) => Promise<void>;
 }) {
-  const [identifier, setIdentifier] = useState('root');
+  const [identifier, setIdentifier] = useState('admin@origineo.local');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [oidcConfig, setOidcConfig] = useState<{ enabled: boolean; buttonLabel: string; loginUrl: string } | null>(null);
+
+  useEffect(() => {
+    authApi.getOidcConfig()
+      .then((res) => {
+        if (res?.data) {
+          setOidcConfig(res.data);
+        }
+      })
+      .catch(() => {
+        // OIDC endpoint unavailable or not configured
+      });
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -189,20 +194,63 @@ function LoginForm({
     }
   };
 
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
   return (
-    <div style={{ maxWidth: 420, margin: '0 auto' }}>
+    <div style={{ maxWidth: 440, margin: '0 auto' }}>
       <div className="glass-card animate-fade-in-up">
         <h2 style={{ textAlign: 'center', marginBottom: 'var(--space-6)' }}>🔐 Connexion</h2>
 
+        {oidcConfig?.enabled && (
+          <div style={{ marginBottom: 'var(--space-6)' }}>
+            <a
+              href={`${apiBase}/api/auth/oidc/login`}
+              className="btn btn-primary"
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 'var(--space-2)',
+                padding: 'var(--space-3)',
+                fontWeight: 600,
+                textDecoration: 'none',
+              }}
+              id="btn-sso-oidc"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <span>{oidcConfig.buttonLabel || 'Se connecter avec SSO'}</span>
+            </a>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-3)',
+                margin: 'var(--space-5) 0 0',
+                color: 'var(--color-text-muted)',
+                fontSize: 'var(--text-xs)',
+              }}
+            >
+              <div style={{ flex: 1, height: 1, background: 'var(--color-border)' }} />
+              <span>OU COMPTE LOCAL</span>
+              <div style={{ flex: 1, height: 1, background: 'var(--color-border)' }} />
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
           <div className="input-group">
-            <label className="input-label">Identifiant</label>
+            <label className="input-label">Email ou identifiant</label>
             <input
               className="input"
               type="text"
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="root"
+              placeholder="admin ou admin@origineo.local"
               required
               id="input-identifier"
             />
@@ -210,7 +258,15 @@ function LoginForm({
 
           <div className="input-group">
             <label className="input-label">Mot de passe</label>
-            <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Votre mot de passe" required id="input-password" />
+            <input
+              className="input"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="admin"
+              required
+              id="input-password"
+            />
           </div>
 
           <button className="btn btn-primary" type="submit" disabled={loading} id="submit-auth" style={{ width: '100%' }}>
@@ -218,45 +274,12 @@ function LoginForm({
           </button>
         </form>
 
-        <p style={{ textAlign: 'center', marginTop: 'var(--space-4)', fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>
-          Compte initial par défaut: <strong>root</strong> / <strong>root</strong>
+        <p style={{ textAlign: 'center', marginTop: 'var(--space-5)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+          Compte administrateur local par défaut : <code>admin</code> / <code>admin</code> (ou <code>admin@origineo.local</code>).
         </p>
       </div>
     </div>
   );
-}
-
-function SettingsPanel({ token, isRootUser }: { token: string; isRootUser: boolean }) {
-  if (!isRootUser) {
-    return (
-      <div className="glass-card" style={{ maxWidth: 760 }}>
-        <h3 style={{ marginBottom: 'var(--space-2)' }}>🔐 Paramètres d&apos;application</h3>
-        <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
-          La configuration LDAP/AD est réservée au compte root.
-        </p>
-        <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)' }}>
-          Demandez au root de modifier les mappings de groupes LDAP.
-        </p>
-      </div>
-    );
-  }
-
-  return <AccountsPanel token={token} mode="ldap" />;
-}
-
-function AccountsPagePanel({ token, isRootUser }: { token: string; isRootUser: boolean }) {
-  if (!isRootUser) {
-    return (
-      <div className="glass-card" style={{ maxWidth: 760 }}>
-        <h3 style={{ marginBottom: 'var(--space-2)' }}>👤 Gestion des comptes</h3>
-        <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
-          La création et gestion des comptes (activation, désactivation, suppression) est réservée au compte root.
-        </p>
-      </div>
-    );
-  }
-
-  return <AccountsPanel token={token} mode="accounts" />;
 }
 
 function DataPanel({ token }: { token: string }) {
@@ -1970,20 +1993,16 @@ function GedcomPanel({ token }: { token: string }) {
   );
 }
 
-// ─── Accounts & LDAP Panel (Root) ──────────
+// ─── Accounts Management Panel ──────────
 function AccountsPanel({
   token,
-  mode = 'all',
 }: {
   token: string;
-  mode?: 'accounts' | 'ldap' | 'all';
 }) {
   const [users, setUsers] = useState<any[]>([]);
   const [roleDrafts, setRoleDrafts] = useState<Record<string, 'ADMIN' | 'VISITOR'>>({});
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [savingUser, setSavingUser] = useState(false);
-  const [loadingLdap, setLoadingLdap] = useState(true);
-  const [savingLdap, setSavingLdap] = useState(false);
   const [processingAccountId, setProcessingAccountId] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1993,19 +2012,6 @@ function AccountsPanel({
     password: '',
     displayName: '',
     role: 'VISITOR' as 'ADMIN' | 'VISITOR',
-  });
-
-  const [ldapForm, setLdapForm] = useState({
-    enabled: false,
-    url: '',
-    bindDn: '',
-    bindPassword: '',
-    userSearchBase: '',
-    userSearchFilter: '(|(sAMAccountName={{username}})(mail={{username}})(uid={{username}}))',
-    groupAttribute: 'memberOf',
-    adminGroupDns: '',
-    userGroupDns: '',
-    hasBindPassword: false,
   });
 
   const clearMessages = () => {
@@ -2032,46 +2038,9 @@ function AccountsPanel({
     }
   }, [token]);
 
-  const loadLdap = useCallback(async () => {
-    setLoadingLdap(true);
-    try {
-      const result = await authApi.getLdapConfig(token);
-      const config = result.data || {};
-
-      setLdapForm({
-        enabled: Boolean(config.enabled),
-        url: config.url || '',
-        bindDn: config.bindDn || '',
-        bindPassword: '',
-        userSearchBase: config.userSearchBase || '',
-        userSearchFilter: config.userSearchFilter || '(|(sAMAccountName={{username}})(mail={{username}})(uid={{username}}))',
-        groupAttribute: config.groupAttribute || 'memberOf',
-        adminGroupDns: (config.adminGroupDns || []).join(', '),
-        userGroupDns: (config.userGroupDns || []).join(', '),
-        hasBindPassword: Boolean(config.hasBindPassword),
-      });
-    } catch (err: any) {
-      setError(err.message || 'Impossible de charger la configuration LDAP.');
-    } finally {
-      setLoadingLdap(false);
-    }
-  }, [token]);
-
   useEffect(() => {
-    if (mode !== 'ldap') {
-      void loadUsers();
-    }
-
-    if (mode !== 'accounts') {
-      void loadLdap();
-    }
-  }, [mode, loadUsers, loadLdap]);
-
-  const parseDnList = (value: string) =>
-    value
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
+    void loadUsers();
+  }, [loadUsers]);
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2173,36 +2142,6 @@ function AccountsPanel({
     }
   };
 
-  const handleSaveLdap = async (e: React.FormEvent) => {
-    e.preventDefault();
-    clearMessages();
-    setSavingLdap(true);
-
-    try {
-      await authApi.updateLdapConfig(
-        {
-          enabled: ldapForm.enabled,
-          url: ldapForm.url || undefined,
-          bindDn: ldapForm.bindDn || undefined,
-          bindPassword: ldapForm.bindPassword || undefined,
-          userSearchBase: ldapForm.userSearchBase || undefined,
-          userSearchFilter: ldapForm.userSearchFilter || undefined,
-          groupAttribute: ldapForm.groupAttribute || undefined,
-          adminGroupDns: parseDnList(ldapForm.adminGroupDns),
-          userGroupDns: parseDnList(ldapForm.userGroupDns),
-        },
-        token,
-      );
-
-      setSuccess('Configuration LDAP enregistrée.');
-      await loadLdap();
-    } catch (err: any) {
-      setError(err.message || 'Impossible de sauvegarder la configuration LDAP.');
-    } finally {
-      setSavingLdap(false);
-    }
-  };
-
   return (
     <div style={{ display: 'grid', gap: 'var(--space-6)' }}>
       {error && (
@@ -2216,21 +2155,20 @@ function AccountsPanel({
         </div>
       )}
 
-      {mode !== 'ldap' && (
       <div className="glass-card">
         <h3 style={{ marginBottom: 'var(--space-4)' }}>👤 Création et gestion des comptes</h3>
         <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
-          Le compte root peut créer, modifier, désactiver, réactiver et supprimer des comptes ADMIN/UTILISATEUR.
+          Gérez les comptes utilisateurs de l&apos;application (ADMIN ou UTILISATEUR), activez ou désactivez les accès.
         </p>
 
         <form onSubmit={handleCreateUser} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 0.8fr auto', gap: 'var(--space-3)', alignItems: 'end' }}>
           <div className="input-group">
-            <label className="input-label">Identifiant *</label>
+            <label className="input-label">Identifiant ou Email *</label>
             <input
               className="input"
               value={newUserForm.identifier}
               onChange={(e) => setNewUserForm((prev) => ({ ...prev, identifier: e.target.value }))}
-              placeholder="admin"
+              placeholder="utilisateur@domaine.fr"
               required
             />
           </div>
@@ -2325,7 +2263,7 @@ function AccountsPanel({
                         [account.id]: e.target.value as 'ADMIN' | 'VISITOR',
                       }))
                     }
-                    disabled={account.isRoot || savingUser || processingAccountId === account.id}
+                    disabled={account.isLocalAdmin || savingUser || processingAccountId === account.id}
                   >
                     <option value="VISITOR">UTILISATEUR</option>
                     <option value="ADMIN">ADMIN</option>
@@ -2335,7 +2273,7 @@ function AccountsPanel({
                     className="btn btn-secondary"
                     onClick={() => handleApplyRole(account.id)}
                     disabled={
-                      account.isRoot ||
+                      account.isLocalAdmin ||
                       savingUser ||
                       processingAccountId === account.id ||
                       (roleDrafts[account.id] || account.role) === account.role
@@ -2347,7 +2285,7 @@ function AccountsPanel({
                   <button
                     className="btn btn-ghost"
                     onClick={() => handleToggleAccountStatus(account)}
-                    disabled={account.isRoot || savingUser || processingAccountId === account.id}
+                    disabled={account.isLocalAdmin || savingUser || processingAccountId === account.id}
                   >
                     {processingAccountId === account.id
                       ? 'Traitement...'
@@ -2360,7 +2298,7 @@ function AccountsPanel({
                     className="btn btn-ghost"
                     style={{ color: 'var(--color-rose)' }}
                     onClick={() => handleDeleteAccount(account)}
-                    disabled={account.isRoot || savingUser || processingAccountId === account.id}
+                    disabled={account.isLocalAdmin || savingUser || processingAccountId === account.id}
                   >
                     Supprimer
                   </button>
@@ -2370,114 +2308,6 @@ function AccountsPanel({
           )}
         </div>
       </div>
-      )}
-
-      {mode !== 'accounts' && (
-      <form className="glass-card" onSubmit={handleSaveLdap}>
-        <h3 style={{ marginBottom: 'var(--space-4)' }}>🔐 LDAP / Active Directory</h3>
-        <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
-          Les utilisateurs LDAP sont automatiquement classés ADMIN ou UTILISATEUR selon les groupes DN configurés.
-        </p>
-
-        {loadingLdap ? (
-          <div className="spinner" />
-        ) : (
-          <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <input
-                type="checkbox"
-                checked={ldapForm.enabled}
-                onChange={(e) => setLdapForm((prev) => ({ ...prev, enabled: e.target.checked }))}
-              />
-              <span>Activer l&apos;authentification LDAP/AD</span>
-            </label>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-              <div className="input-group">
-                <label className="input-label">URL LDAP</label>
-                <input
-                  className="input"
-                  value={ldapForm.url}
-                  onChange={(e) => setLdapForm((prev) => ({ ...prev, url: e.target.value }))}
-                  placeholder="ldap://ad.example.local:389"
-                />
-              </div>
-              <div className="input-group">
-                <label className="input-label">Base de recherche utilisateur</label>
-                <input
-                  className="input"
-                  value={ldapForm.userSearchBase}
-                  onChange={(e) => setLdapForm((prev) => ({ ...prev, userSearchBase: e.target.value }))}
-                  placeholder="OU=Users,DC=example,DC=local"
-                />
-              </div>
-              <div className="input-group">
-                <label className="input-label">Bind DN (optionnel)</label>
-                <input
-                  className="input"
-                  value={ldapForm.bindDn}
-                  onChange={(e) => setLdapForm((prev) => ({ ...prev, bindDn: e.target.value }))}
-                  placeholder="CN=svc-origineo,..."
-                />
-              </div>
-              <div className="input-group">
-                <label className="input-label">
-                  Bind Password {ldapForm.hasBindPassword ? '(laissez vide pour conserver)' : ''}
-                </label>
-                <input
-                  className="input"
-                  type="password"
-                  value={ldapForm.bindPassword}
-                  onChange={(e) => setLdapForm((prev) => ({ ...prev, bindPassword: e.target.value }))}
-                />
-              </div>
-              <div className="input-group" style={{ gridColumn: '1 / -1' }}>
-                <label className="input-label">Filtre utilisateur LDAP</label>
-                <input
-                  className="input"
-                  value={ldapForm.userSearchFilter}
-                  onChange={(e) => setLdapForm((prev) => ({ ...prev, userSearchFilter: e.target.value }))}
-                  placeholder="(|(sAMAccountName={{username}})(mail={{username}}))"
-                />
-              </div>
-              <div className="input-group" style={{ gridColumn: '1 / -1' }}>
-                <label className="input-label">Attribut groupes</label>
-                <input
-                  className="input"
-                  value={ldapForm.groupAttribute}
-                  onChange={(e) => setLdapForm((prev) => ({ ...prev, groupAttribute: e.target.value }))}
-                  placeholder="memberOf"
-                />
-              </div>
-              <div className="input-group" style={{ gridColumn: '1 / -1' }}>
-                <label className="input-label">Groupes ADMIN (DN, séparés par des virgules)</label>
-                <input
-                  className="input"
-                  value={ldapForm.adminGroupDns}
-                  onChange={(e) => setLdapForm((prev) => ({ ...prev, adminGroupDns: e.target.value }))}
-                  placeholder="CN=Origineo_Admins,OU=Groups,DC=example,DC=local"
-                />
-              </div>
-              <div className="input-group" style={{ gridColumn: '1 / -1' }}>
-                <label className="input-label">Groupes UTILISATEUR (DN, optionnel)</label>
-                <input
-                  className="input"
-                  value={ldapForm.userGroupDns}
-                  onChange={(e) => setLdapForm((prev) => ({ ...prev, userGroupDns: e.target.value }))}
-                  placeholder="CN=Origineo_Users,OU=Groups,DC=example,DC=local"
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="btn btn-primary" type="submit" disabled={savingLdap}>
-                {savingLdap ? 'Enregistrement...' : 'Enregistrer la configuration LDAP'}
-              </button>
-            </div>
-          </div>
-        )}
-      </form>
-      )}
     </div>
   );
 }
