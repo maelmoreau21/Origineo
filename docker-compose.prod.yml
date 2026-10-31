@@ -1,117 +1,65 @@
-# ══════════════════════════════════════════════════════
-# Origineo — Production Docker Compose
-# ══════════════════════════════════════════════════════
-#
-# Usage:
-#   docker compose -f docker-compose.prod.yml up -d --build
-#
-# Prerequisites:
-#   - Copy .env.example to .env.prod and set secure values
-#   - Set JWT_SECRET to a strong 64-char random string
-#   - Set DB_PASSWORD to a strong random password
-#   - Ensure ports 80/443 are available for Nginx
-#
-# ══════════════════════════════════════════════════════
-
 services:
-  # ─── PostgreSQL ──────────────────────────
-  db:
-    image: postgres:17-alpine
+  postgres:
+    image: postgres:18-alpine
+    container_name: origineo-postgres
     restart: always
     environment:
-      POSTGRES_USER: ${DB_USER:-origineo}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
-      POSTGRES_DB: ${DB_NAME:-origineo}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-origineo}
+    # Attention : Depuis PostgreSQL 18, PGDATA est sous /var/lib/postgresql/18/docker
+    # Le volume doit donc être monté sur /var/lib/postgresql
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports:
-      - "${DB_PORT:-5432}:5432"
+      - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-origineo}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-
-  # ─── Backend API ─────────────────────────
-  api:
-    image: ghcr.io/maelmoreau21/origineo-api:latest
-    restart: always
-    environment:
-      DATABASE_URL: postgresql://${DB_USER:-origineo}:${DB_PASSWORD}@db:5432/${DB_NAME:-origineo}
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
-      JWT_EXPIRATION: ${JWT_EXPIRATION:-7d}
-      API_PORT: 3001
-      STORAGE_PATH: /app/storage
-      NODE_ENV: production
-      # Compte administrateur local
-      LOCAL_ADMIN_EMAIL: ${LOCAL_ADMIN_EMAIL:-admin@origineo.local}
-      LOCAL_ADMIN_PASSWORD: ${LOCAL_ADMIN_PASSWORD:?LOCAL_ADMIN_PASSWORD must be set in production}
-      LOCAL_ADMIN_NAME: ${LOCAL_ADMIN_NAME:-Administrateur}
-      # SSO OpenID Connect (OIDC)
-      OIDC_ENABLED: ${OIDC_ENABLED:-false}
-      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
-      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-https://${DOMAIN:-localhost}/api/auth/oidc/callback}
-      OIDC_ADMIN_CLAIM: ${OIDC_ADMIN_CLAIM:-groups}
-      OIDC_ADMIN_VALUE: ${OIDC_ADMIN_VALUE:-origineo-admin}
-      FRONTEND_URL: ${FRONTEND_URL:-https://${DOMAIN:-localhost}}
-    volumes:
-      - filedata:/app/storage
-    depends_on:
-      db:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3001/api || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-origineo}"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
-
-  # ─── Frontend ────────────────────────────
-  web:
-    image: ghcr.io/maelmoreau21/origineo-web:latest
-    restart: always
-    environment:
-      NODE_ENV: production
-      NEXT_TELEMETRY_DISABLED: 1
-    depends_on:
-      api:
-        condition: service_healthy
     deploy:
       resources:
         limits:
           memory: 256M
 
-  # ─── Nginx Reverse Proxy ─────────────────
-  nginx:
-    image: nginx:1.27-alpine
+  origineo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: origineo-app
     restart: always
-    ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
-      - api
-      - web
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-origineo}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      STORAGE_PATH: /app/storage
+      STATIC_DIR: /app/static
+      FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL is required}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:?OIDC_ISSUER_URL is required}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?OIDC_CLIENT_ID is required}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?OIDC_CLIENT_SECRET is required}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:?OIDC_REDIRECT_URI is required}
+      OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email groups}
+      OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-groups}
+      OIDC_ADMIN_VALUES: ${OIDC_ADMIN_VALUES:-admin,administrateur,origineo-admin}
+      OIDC_MODIFIER_VALUES: ${OIDC_MODIFIER_VALUES:-modifier,modificateur,editor,origineo-modifier}
+      OIDC_READER_VALUES: ${OIDC_READER_VALUES:-reader,lecteur,viewer,origineo-reader}
+      OIDC_DEFAULT_ROLE: ${OIDC_DEFAULT_ROLE:-READER}
+      OIDC_REQUIRE_GROUP: ${OIDC_REQUIRE_GROUP:-true}
+      OIDC_BUTTON_LABEL: ${OIDC_BUTTON_LABEL:-Se connecter avec SSO (OIDC)}
+      OIDC_DEV_MOCK: "false"
+    volumes:
+      - origineo_storage:/app/storage
     deploy:
       resources:
         limits:
           memory: 128M
 
 volumes:
-  pgdata:
-    driver: local
-  filedata:
-    driver: local
+  postgres_data:
+  origineo_storage:

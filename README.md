@@ -1,259 +1,82 @@
-# 🌳 Origineo
-
-**Application web d'arbre généalogique** conçue pour gérer des millions de profils avec stabilité et performance.
-
-## ✨ Fonctionnalités
-
-- **Arbre interactif** — Visualisation React Flow avec disposition automatique Dagre
-- **Chargement dynamique** — CTE récursives pour charger X générations ascendantes/descendantes
-- **Import/Export GEDCOM** — Compatibilité GEDCOM 5.5.1 avec fusion avancée et détection de doublons
-- **Stockage de documents** — Upload de photos et actes (dossiers UUID par personne/couple)
-- **Recherche fuzzy** — Recherche par trigrammes (pg_trgm) sur les noms
-- **Calcul de parenté** — BFS bidirectionnel pour trouver le chemin entre deux personnes
-- **Authentification moderne** — SSO OpenID Connect (OIDC: Authentik, Keycloak, Authelia, Google...) & Compte local configurable via Docker Compose
-- **Dark theme premium** — Design système glassmorphism avec des micro-animations
-
-## 🏗️ Stack Technique
-
-| Couche | Technologie |
-|---|---|
-| Backend | NestJS 11 · TypeScript · Prisma 7 |
-| Frontend | Next.js 15 · React 19 · React Flow 12 |
-| Base de données | PostgreSQL 17 |
-| Conteneurisation | Docker + Docker Compose |
-| Reverse Proxy | Nginx 1.27 |
-| Tests | Vitest |
-
-## 📁 Structure du Projet
-
-```
-Origineo/
-├── apps/
-│   ├── api/            # Backend NestJS
-│   └── web/            # Frontend Next.js
-├── packages/
-│   └── shared/         # Types & Enums partagés
-├── nginx/              # Configuration Nginx prod
-├── docker/             # Init SQL PostgreSQL
-├── .github/             # CI/CD (GitHub Actions)
-├── .claude/             # Règles et Mémoire IA
-├── docker-compose.yml   # Dev
-├── docker-compose.prod.yml # Production
-└── README.md            # Documentation
-```
+# 🌳 Origineo Studio v1.0.0
+> **Plateforme Professionnelle de Généalogie Interactive à Haute Performance**  
+> Conçue pour traiter **10 000 000+ d'individus** en temps réel avec **PostgreSQL 18 Alpine**, **Rust (Axum + SQLx)** et **Svelte 5 (Runes) + SvelteKit 3**.
 
 ---
 
-## 🚀 Démarrage Rapide (Développement)
+## ⚡ Caractéristiques & Architecture Technique
+
+- **Architecture Cloud-Native Ultra-Légère** :
+  - **Rust Backend** : API asynchrone multithreadée avec empreinte mémoire minimale (~30 Mo RAM).
+  - **PostgreSQL 18** : Moteur natif `uuidv7()` temporellement ordonné (zéro fragmentation d'index B-Tree).
+  - **Zero Database Bloat** : Aucun fichier binaire (BLOB) en base. Les photographies et actes scannés sont gérés sur le système de fichiers (`/uploads`) via des chemins UUID transparents.
+  - **Recherche Fuzzy sub-10ms** : Trigrammes `pg_trgm 1.6` avec `unaccent 1.1` et `btree_gin 1.3` permettant des recherches instantanées sur plusieurs millions d'individus.
+  - **Single Canonical Database Schema** : Un seul schéma consolidé [`backend/migrations/0001_init.sql`](backend/migrations/0001_init.sql) avec champ extensible `custom_attributes JSONB` pour une pérennité absolue sans migrations morcelées.
+
+---
+
+## 🚀 Fonctionnalités Professionnelles
+
+### 1. Visualisations & Navigation Multi-Vues
+- **Arbre Dynamique par Générations (3A/3D)** : Chargement ciblé et fluide de la parenté ascendante et descendante.
+- **Roue d'Ascendance Sosa 360° (Fan Chart)** : Éventail circulaire interactif jusqu'à 8–10 générations.
+- **Atlas & Carte des Migrations** : Trajectoires de vie (naissance → décès) et migrations intergénérationnelles tracées sur carte interactive Leaflet.
+- **Frise Chronologique Historique** : Barres de vie superposées aux contextes historiques (Ancien Régime, Révolution, XIXe Industriel, 14-18, 39-45).
+
+### 2. Édition & Exports Professionnels
+- **🖨️ Arbre Géant Vectoriel / SVG (Format Traceur A0/A1)** : Export vectoriel pur haute définition pour impression sur traceur ou traceur papier.
+- **📖 Livre de Famille (Chronique Biographique)** : Génération automatique d'un livre généalogique complet illustré par génération.
+- **📄 Fiche Biographique Imprimable** : Génération de fiches d'archives conformes pour l'impression ou l'export PDF.
+
+### 3. Contrôle de Cohérence & Outils d'Archives
+- **Moteur d'Audit 9 Règles** : Détection des erreurs chronologiques, âges parentaux anormaux, mariages post-mortem et espacements impossibles en fratrie.
+- **🏛️ Convertisseur Calendrier Républicain (1792–1805)** : Conversion bidirectionnelle automatique (ex: *14 Brumaire An IV* ↔ *1795-11-05*).
+- **👥 Détection d'Homonymes & Fusion Intelligente** : Détection de doublons par score de similarité et fusion côte-à-côte avec réassignation automatique de tous les actes, filiations et documents.
+- **📜 Référentiel Sources, Dépôts & Citations (Norme GEDCOM 7)** : Cotes d'archives, indices de certitude (1 à 4) et transcriptions paléographiques.
+- **🤝 Témoins & Rôles d'Événements** : Parrains, marraines, célébrants, témoins et notaires rattachés aux actes avec liens interactifs.
+
+---
+
+## 🛠️ Démarrage Rapide
 
 ### Prérequis
+- [Docker & Docker Compose](https://www.docker.com/)
+- [Rust & Cargo](https://rustup.rs/) (1.80+)
+- [Node.js & npm](https://nodejs.org/) (Node 20+)
 
-- **Node.js** 22+
-- **pnpm** 9.15+
-- **Docker** + **Docker Compose**
-
-### 1. Cloner et installer
-
+### 1. Lancer la base PostgreSQL 18
 ```bash
-git clone https://github.com/votre-user/Origineo.git
-cd Origineo
-pnpm install
+docker compose up -d
 ```
 
-### 2. Lancer PostgreSQL
-
+### 2. Compiler et Lancer le Serveur Rust
 ```bash
-docker compose up -d db
+cd backend
+$env:DATABASE_URL="postgres://origineo:origineo_secret@127.0.0.1:5432/origineo"
+$env:STATIC_DIR="../frontend/build"
+$env:STORAGE_PATH="../uploads"
+$env:OIDC_DEV_MOCK="true"
+cargo run
 ```
 
-### 3. Configurer l'environnement
-
+### 3. Compiler le Frontend Svelte 5
 ```bash
-cp .env.example .env
-# Modifier les variables si nécessaire
+cd frontend
+npm install
+npm run build
 ```
 
-### 4. Initialiser la base de données
-
-```bash
-pnpm --filter @origineo/api prisma migrate dev
-pnpm --filter @origineo/api prisma generate
-```
-
-### 5. Lancer l'application
-
-```bash
-pnpm run dev
-```
-
-- **API** : http://localhost:3001
-- **Swagger** : http://localhost:3001/api
-- **Frontend** : http://localhost:3000
-
-### 6. Authentification & Premier accès
-
-- **Compte local** : configuré via les variables `LOCAL_ADMIN_EMAIL` (`admin@origineo.local`) et `LOCAL_ADMIN_PASSWORD` (`admin123456`) dans `docker-compose.yml` ou `.env`.
-- **SSO OIDC** : connectez votre fournisseur d'identité préféré (Authentik, Keycloak, Authelia, Google, Azure AD) simplement en renseignant `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` et `OIDC_CLIENT_SECRET`. Le bouton SSO apparaîtra automatiquement sur la page de connexion `/admin`.
+Ouvrez ensuite votre navigateur sur **[http://localhost:8080](http://localhost:8080)**.
 
 ---
 
-## 🐳 Tout via Docker (Développement)
-
-```bash
-cp .env.example .env
-docker compose up --build
-```
-
----
-
-## 🏭 Déploiement en Production
-
-### 1. Préparer l'environnement
-
-```bash
-cp .env.prod.example .env.prod
-```
-
-Éditez `.env.prod` avec des valeurs sécurisées :
-
-```env
-DB_PASSWORD=un_mot_de_passe_tres_fort_ici
-JWT_SECRET=votre_secret_jwt_64_caracteres_aleatoires
-NEXT_PUBLIC_API_URL=https://votre-domaine.com
-```
-
-> **⚠️ Important** : Utilisez `openssl rand -base64 64 | tr -d '\n'` pour générer le JWT_SECRET.
-
-### 2. SSL (optionnel mais recommandé)
-
-```bash
-# Avec Let's Encrypt
-certbot certonly --standalone -d votre-domaine.com
-
-# Copier les certificats
-cp /etc/letsencrypt/live/votre-domaine.com/fullchain.pem nginx/ssl/cert.pem
-cp /etc/letsencrypt/live/votre-domaine.com/privkey.pem nginx/ssl/key.pem
-```
-
-Puis décommentez la section HTTPS dans `nginx/nginx.conf`.
-
-### 3. Lancer en production (CI/CD)
-
-Le projet utilise GitHub Actions pour le build automatique. Pour déployer :
-
-1. Se connecter au registry (une fois) :
-```bash
-echo $GITHUB_TOKEN | docker login ghcr.io -u maelmoreau21 --password-stdin
-```
-2. Déployer les images distantes :
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod pull
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
-```
+## 🔒 Sécurité & Rôles Utilisateurs
+Connexion sécurisée via **SSO OIDC** avec 3 niveaux d'accès :
+- **ADMINISTRATEUR** : Accès total, imports/exports GEDCOM, fusions de branches, gestion documentaire et système.
+- **MODIFICATEUR** : Ajout et édition de personnes, dates, lieux, actes, témoins et documents.
+- **LECTEUR** : Consultation interactive, parcours de l'arbre, carte des migrations, recherche et exports PDF.
 
 ---
 
-## 🚀 CI/CD (GitHub Actions)
-
-L'application inclut un workflow complet :
-
-- **Automated Tests** : Exécution systématique des 41 tests à chaque push.
-- **Docker Registry** : Build et push automatique vers **GHCR**.
-- **Images** : `ghcr.io/maelmoreau21/origineo-api` & `origineo-web`.
-
-### 4. Vérifier
-
-```bash
-# Santé de l'API
-curl http://localhost/api
-
-# Santé Nginx
-curl http://localhost/health
-
-# Logs
-docker compose -f docker-compose.prod.yml logs -f
-```
-
-### Architecture de production
-
-```
-Internet → Nginx (:80/:443)
-                ├── /api/*  → API NestJS (:3001)
-                └── /*      → Next.js (:3000)
-
-                      API → PostgreSQL (:5432)
-                       │
-                       └── Volume: filedata (stockage documents)
-```
-
-### Sécurité Production
-
-| Mesure | Détail |
-|---|---|
-| Rate limiting login | 5 req/min max par IP |
-| Rate limiting API | 30 req/s max par IP |
-| Security headers | X-Frame-Options, X-XSS-Protection, CSP |
-| Upload limit | 25 MB (Nginx) + 20 MB (API) |
-| Non-root containers | Utilisateurs `nodejs` / `nextjs` |
-| Health checks | Toutes les 10s avec retry |
-
----
-
-## 🧪 Tests
-
-```bash
-# Lancer tous les tests
-pnpm --filter @origineo/api test
-
-# Mode watch
-pnpm --filter @origineo/api test:watch
-
-# Avec couverture
-pnpm --filter @origineo/api test:cov
-```
-
-### Tests disponibles
-
-| Suite | Tests | Couverture |
-|---|---|---|
-| GEDCOM Merge Algorithm | 18 tests | Bigram similarity, scoring, normalization |
-| Tree Service | 12 tests | Generation mapping, node building, edge cases |
-| Route Security | 11 tests | RolesGuard, RBAC matrix visitor/admin |
-| **Total** | **41 tests** | |
-
----
-
-## 📄 API Endpoints
-
-### Routes Publiques (sans auth)
-
-| Méthode | Route | Description |
-|---|---|---|
-| GET | `/api/persons` | Liste paginée |
-| GET | `/api/persons/root` | Personne racine |
-| GET | `/api/persons/:id` | Détail + relations |
-| GET | `/api/tree/:id` | Arbre dynamique |
-| GET | `/api/tree/relationship/:a/:b` | Chemin de parenté |
-| GET | `/api/search?q=...` | Recherche fuzzy |
-| GET | `/api/gedcom/export` | Export GEDCOM |
-| GET | `/api/documents/person/:id` | Documents d'une personne |
-| GET | `/api/documents/:id/download` | Télécharger un document |
-
-### Routes Admin (JWT + rôle ADMIN)
-
-| Méthode | Route | Description |
-|---|---|---|
-| POST | `/api/persons` | Créer une personne |
-| PATCH | `/api/persons/:id` | Modifier |
-| DELETE | `/api/persons/:id` | Supprimer |
-| POST | `/api/gedcom/import` | Import GEDCOM simple |
-| POST | `/api/gedcom/merge/analyze` | Analyse pour fusion |
-| POST | `/api/gedcom/merge/apply` | Appliquer fusion |
-| POST | `/api/documents/upload` | Upload fichier |
-| DELETE | `/api/documents/:id` | Supprimer fichier |
-
----
-
-## 📝 Licence
-
-MIT © Origineo
+## 📜 Licence
+Projet open-source sous licence **MIT**.
