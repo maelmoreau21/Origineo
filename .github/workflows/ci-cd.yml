@@ -1,0 +1,119 @@
+name: 🚀 Origineo CI / CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Frontend Test & Typecheck (Svelte 5 + SvelteKit 3 + npm)
+  # ---------------------------------------------------------------------------
+  frontend-check:
+    name: 🎨 Frontend Check & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: SvelteKit Diagnostic & Typecheck
+        working-directory: frontend
+        run: npm run check
+
+      - name: Build Static Production Assets
+        working-directory: frontend
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # 2. Rust Backend Test & Cargo Check
+  # ---------------------------------------------------------------------------
+  backend-test:
+    name: 🦀 Rust Backend Tests & Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Cargo Check
+        working-directory: backend
+        run: cargo check --verbose
+
+      - name: Cargo Unit Tests (GEDCOM & Algorithms)
+        working-directory: backend
+        run: cargo test --verbose
+
+  # ---------------------------------------------------------------------------
+  # 3. Multi-Stage Unified Docker Build & Publish
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: 🐳 Docker Build & Push (Production Image)
+    needs: [frontend-check, backend-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (ghcr.io)
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,format=short
+            type=semver,pattern={{version}}
+            latest
+
+      - name: Build & Push Unified Multi-Stage Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
