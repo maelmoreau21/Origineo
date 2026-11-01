@@ -23,6 +23,7 @@
 	import AuditModal from '$lib/components/AuditModal.svelte';
 	import DirectoryStatsModal from '$lib/components/DirectoryStatsModal.svelte';
 	import DuplicatesModal from '$lib/components/DuplicatesModal.svelte';
+	import Logo from '$lib/components/Logo.svelte';
 	import { exportPosterSvgOrPrint, exportFamilyBook } from '$lib/book-and-poster-export';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -198,14 +199,7 @@
 
 {#if loadingAuth}
 	<div class="boot-screen">
-		<div class="boot-crest">
-			<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<circle cx="12" cy="6" r="3" />
-				<circle cx="6" cy="18" r="2.5" />
-				<circle cx="18" cy="18" r="2.5" />
-				<path d="M12 9v6M7 15h10" />
-			</svg>
-		</div>
+		<Logo size={48} />
 		<div style="font-weight: 700; font-size: 0.92rem;">Origineo Studio…</div>
 	</div>
 {:else if currentUser}
@@ -227,14 +221,7 @@
 		<header class="studio-header">
 			<!-- Brand & Active Root Breadcrumb -->
 			<div class="brand-cluster">
-				<div class="brand-emblem">
-					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<circle cx="12" cy="5" r="2.5" />
-						<circle cx="6" cy="18" r="2.5" />
-						<circle cx="18" cy="18" r="2.5" />
-						<path d="M12 7.5V13M6 15.5V13h12v2.5" />
-					</svg>
-				</div>
+				<Logo size={34} />
 				<div>
 					<div class="brand-title">
 						Origineo <span class="studio-tag">STUDIO</span>
@@ -569,75 +556,8 @@
 
 		<!-- Main Workspace: Left Studio Dock + Interactive Viewport + Right Slide-Over Drawer -->
 		<div class="studio-workspace">
-			<!-- Left Vertical Studio Rail -->
+			<!-- Left Vertical Studio Rail (Outils & Modales) -->
 			<nav class="studio-rail" aria-label="Outils généalogiques">
-				<div class="rail-group">
-					<button
-						type="button"
-						class="rail-btn"
-						class:active={viewMode === 'tree'}
-						onclick={() => (viewMode = 'tree')}
-						title={i18n.t('viewTree')}
-					>
-						<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<circle cx="12" cy="5" r="2.5" />
-							<circle cx="6" cy="19" r="2.5" />
-							<circle cx="18" cy="19" r="2.5" />
-							<path d="M12 7.5V13M6 16.5V13h12v3.5" />
-						</svg>
-						<span class="rail-label">{i18n.t('viewTree')}</span>
-					</button>
-
-					<button
-						type="button"
-						class="rail-btn"
-						class:active={viewMode === 'fanchart'}
-						onclick={() => {
-							viewMode = 'fanchart';
-							if (ancestorsGen < 5) applyGenerationPreset(6, descendantsGen);
-						}}
-						title={i18n.t('viewFanChart')}
-					>
-						<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M12 12L4.93 4.93a10 10 0 0 1 14.14 0L12 12z" />
-							<circle cx="12" cy="12" r="3" />
-						</svg>
-						<span class="rail-label">{i18n.t('viewFanChart')}</span>
-					</button>
-
-					<button
-						type="button"
-						class="rail-btn"
-						class:active={viewMode === 'map'}
-						onclick={() => (viewMode = 'map')}
-						title={i18n.t('viewMap')}
-					>
-						<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
-							<line x1="8" y1="2" x2="8" y2="18" />
-							<line x1="16" y1="6" x2="16" y2="22" />
-						</svg>
-						<span class="rail-label">{i18n.t('viewMap')}</span>
-					</button>
-
-					<button
-						type="button"
-						class="rail-btn"
-						class:active={viewMode === 'timeline'}
-						onclick={() => (viewMode = 'timeline')}
-						title={i18n.t('viewTimeline')}
-					>
-						<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<line x1="4" y1="6" x2="16" y2="6" />
-							<line x1="8" y1="12" x2="20" y2="12" />
-							<line x1="4" y1="18" x2="14" y2="18" />
-						</svg>
-						<span class="rail-label">{i18n.t('viewTimeline')}</span>
-					</button>
-				</div>
-
-				<div class="rail-divider"></div>
-
 				<div class="rail-group">
 					<button
 						type="button"
@@ -906,17 +826,6 @@
 		color: var(--text-secondary);
 	}
 
-	.boot-crest {
-		width: 56px;
-		height: 56px;
-		border-radius: 16px;
-		background: var(--accent-soft);
-		color: var(--accent);
-		border: 1px solid rgba(16, 185, 129, 0.35);
-		display: grid;
-		place-items: center;
-	}
-
 	.studio-shell {
 		height: 100vh;
 		display: flex;
@@ -942,18 +851,6 @@
 		align-items: center;
 		gap: 0.7rem;
 		min-width: 0;
-	}
-
-	.brand-emblem {
-		width: 36px;
-		height: 36px;
-		border-radius: 10px;
-		background: linear-gradient(135deg, var(--accent-soft), rgba(56, 189, 248, 0.12));
-		border: 1px solid rgba(16, 185, 129, 0.35);
-		color: var(--accent);
-		display: grid;
-		place-items: center;
-		flex-shrink: 0;
 	}
 
 	.brand-title {
@@ -1238,13 +1135,6 @@
 		width: 100%;
 	}
 
-	.rail-divider {
-		width: 32px;
-		height: 1px;
-		background: var(--border-subtle);
-		margin: 0.3rem auto;
-	}
-
 	.rail-btn {
 		width: 100%;
 		padding: 0.48rem 0.15rem;
@@ -1264,12 +1154,6 @@
 	.rail-btn:hover {
 		background: var(--bg-elevated);
 		color: var(--text-primary);
-	}
-
-	.rail-btn.active {
-		background: var(--accent-soft);
-		color: var(--accent);
-		border-color: rgba(16, 185, 129, 0.3);
 	}
 
 	.rail-btn.accent {

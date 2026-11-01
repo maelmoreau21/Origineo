@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%" fill="none">
+  <defs>
+    <linearGradient id="tech-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#1E1B4B" />
+    </linearGradient>
+    <linearGradient id="tech-accent" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6366F1" />
+      <stop offset="100%" stop-color="#06B6D4" />
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="115" fill="url(#tech-bg)" />
+
+  <!-- Anneau "O" interrompu en bas -->
+  <path d="M 180 390 A 160 160 0 1 1 332 390" stroke="url(#tech-accent)" stroke-width="24" stroke-linecap="round" />
+
+  <!-- Branches géométriques -->
+  <g stroke="#FFFFFF" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 256 400 L 256 280" />
+    <path d="M 256 310 L 180 234 L 180 190" />
+    <path d="M 256 310 L 332 234 L 332 190" />
+    <path d="M 256 280 L 256 150" />
+  </g>
+
+  <!-- Nœuds -->
+  <circle cx="256" cy="400" r="28" fill="#06B6D4" stroke="#0F172A" stroke-width="8" />
+  <circle cx="180" cy="185" r="24" fill="#6366F1" />
+  <circle cx="256" cy="145" r="26" fill="#06B6D4" />
+  <circle cx="332" cy="185" r="24" fill="#6366F1" />
+</svg>

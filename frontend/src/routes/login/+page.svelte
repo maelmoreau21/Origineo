@@ -2,6 +2,7 @@
 	import { authApi } from '$lib/api';
 	import { i18n } from '$lib/i18n/index.svelte';
 	import { AVAILABLE_LOCALES, type LocaleCode } from '$lib/i18n/translations';
+	import Logo from '$lib/components/Logo.svelte';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 
@@ -42,14 +43,7 @@
 	<!-- Top Bar -->
 	<header class="login-topbar">
 		<div style="display: flex; align-items: center; gap: 0.7rem;">
-			<div class="logo-badge">
-				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<circle cx="12" cy="5" r="2.5" />
-					<circle cx="6" cy="18" r="2.5" />
-					<circle cx="18" cy="18" r="2.5" />
-					<path d="M12 7.5V13M6 15.5V13h12v2.5" />
-				</svg>
-			</div>
+			<Logo size={32} />
 			<div>
 				<span style="font-weight: 800; font-size: 1.05rem;">Origineo</span>
 				<span class="studio-chip">STUDIO v2.0</span>
@@ -76,13 +70,8 @@
 
 	<main class="login-split">
 		<div class="login-card">
-			<div class="logo-hero">
-				<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-					<circle cx="12" cy="5" r="2.8" />
-					<circle cx="6" cy="18" r="2.8" />
-					<circle cx="18" cy="18" r="2.8" />
-					<path d="M12 7.8V13M6 15.2V13h12v2.2" />
-				</svg>
+			<div style="display: flex; justify-content: center; margin-bottom: 0.5rem;">
+				<Logo size={64} />
 			</div>
 
 			<div class="security-pill mono">SSO OIDC · PKCE S256 · POSTGRESQL 18</div>
@@ -176,17 +165,6 @@
 		backdrop-filter: blur(12px);
 	}
 
-	.logo-badge {
-		width: 36px;
-		height: 36px;
-		border-radius: 10px;
-		background: var(--accent-soft);
-		color: var(--accent);
-		border: 1px solid rgba(16, 185, 129, 0.35);
-		display: grid;
-		place-items: center;
-	}
-
 	.studio-chip {
 		margin-left: 0.45rem;
 		font-size: 0.62rem;
@@ -216,18 +194,6 @@
 		border: 1px solid var(--border-color);
 		box-shadow: var(--shadow-lg);
 		text-align: center;
-	}
-
-	.logo-hero {
-		width: 64px;
-		height: 64px;
-		margin: 0 auto 0.85rem;
-		border-radius: 18px;
-		background: linear-gradient(135deg, var(--accent-soft), rgba(56, 189, 248, 0.14));
-		color: var(--accent);
-		border: 1px solid rgba(16, 185, 129, 0.35);
-		display: grid;
-		place-items: center;
 	}
 
 	.security-pill {
