@@ -130,7 +130,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/relationships/{id}", delete(persons::delete_relationship))
         .route("/unions", post(persons::create_union))
         .route("/unions/{id}", delete(persons::delete_union))
-        // Dynamic Tree & Bidirectional BFS Relationship Path
+        // Dynamic Tree, Bidirectional BFS Relationship Path & Fragments
+        .route("/tree/fragments", get(tree::get_tree_fragments))
         .route("/tree/{id}", get(tree::get_tree_window))
         .route(
             "/tree/relationship/{person_a_id}/{person_b_id}",

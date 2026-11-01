@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -839,4 +839,180 @@ fn compute_kinship_summary(edges: &[EdgeKind], target_gender: &str) -> (String, 
         format!("Lien de parenté en {} degré(s)", edges.len()),
         format!("Kinship connection in {} step(s)", edges.len()),
     )
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeFragmentDto {
+    pub id: String,
+    pub is_main: bool,
+    pub size: usize,
+    pub label: String,
+    pub doyen: Option<PersonDto>,
+    pub persons: Vec<PersonDto>,
+    pub root_persons: Vec<PersonDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeFragmentsResponse {
+    pub total_persons: usize,
+    pub main_component_size: usize,
+    pub disconnected_count: usize,
+    pub isolated_count: usize,
+    pub fragments: Vec<TreeFragmentDto>,
+}
+
+pub async fn get_tree_fragments(
+    State(state): State<Arc<AppState>>,
+    _user: AuthUser,
+    Query(query): Query<RelationshipPathQuery>,
+) -> AppResult<impl IntoResponse> {
+    let tree_id = parse_tree_id(query.tree_id.as_deref())?;
+
+    let sql = format!("{} WHERE p.tree_id = $1", PERSON_SELECT_SQL);
+    let rows = sqlx::query_as::<_, PersonWithPlaceRow>(&sql)
+        .bind(tree_id)
+        .fetch_all(&state.pool)
+        .await?;
+    let persons: Vec<PersonDto> = rows.into_iter().map(|r| r.into_dto(None)).collect();
+
+    if persons.is_empty() {
+        return Ok(ApiSuccess::new(TreeFragmentsResponse {
+            total_persons: 0,
+            main_component_size: 0,
+            disconnected_count: 0,
+            isolated_count: 0,
+            fragments: vec![],
+        }));
+    }
+
+    let rels: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT parent_id, child_id FROM relationships WHERE tree_id = $1",
+    )
+    .bind(tree_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let unions: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT partner1_id, partner2_id FROM unions WHERE tree_id = $1",
+    )
+    .bind(tree_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let person_map: HashMap<Uuid, PersonDto> = persons.into_iter().map(|p| (p.id, p)).collect();
+    let mut adj: HashMap<Uuid, Vec<Uuid>> = HashMap::with_capacity(person_map.len());
+    let mut child_to_parents: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+
+    for &id in person_map.keys() {
+        adj.insert(id, Vec::new());
+    }
+
+    for (p, c) in rels {
+        if person_map.contains_key(&p) && person_map.contains_key(&c) {
+            adj.entry(p).or_default().push(c);
+            adj.entry(c).or_default().push(p);
+            child_to_parents.entry(c).or_default().push(p);
+        }
+    }
+
+    for (u1, u2) in unions {
+        if person_map.contains_key(&u1) && person_map.contains_key(&u2) {
+            adj.entry(u1).or_default().push(u2);
+            adj.entry(u2).or_default().push(u1);
+        }
+    }
+
+    let mut visited: HashSet<Uuid> = HashSet::new();
+    let mut components: Vec<Vec<Uuid>> = Vec::new();
+
+    for &id in person_map.keys() {
+        if visited.contains(&id) {
+            continue;
+        }
+        let mut comp = Vec::new();
+        let mut q = VecDeque::new();
+        q.push_back(id);
+        visited.insert(id);
+
+        while let Some(curr) = q.pop_front() {
+            comp.push(curr);
+            if let Some(neighbors) = adj.get(&curr) {
+                for &n in neighbors {
+                    if visited.insert(n) {
+                        q.push_back(n);
+                    }
+                }
+            }
+        }
+        components.push(comp);
+    }
+
+    // Sort components by size descending
+    components.sort_by(|a, b| b.len().cmp(&a.len()));
+
+    let main_size = components.first().map(|c| c.len()).unwrap_or(0);
+
+    let mut fragments = Vec::new();
+    let mut disconnected_count = 0usize;
+    let mut isolated_count = 0usize;
+
+    for (idx, comp) in components.into_iter().enumerate() {
+        let is_main = idx == 0;
+        let size = comp.len();
+        if !is_main {
+            if size == 1 {
+                isolated_count += 1;
+            } else {
+                disconnected_count += 1;
+            }
+        }
+
+        let mut comp_persons: Vec<PersonDto> = comp
+            .into_iter()
+            .filter_map(|id| person_map.get(&id).cloned())
+            .collect();
+
+        comp_persons.sort_by(|a, b| {
+            a.birth_date.cmp(&b.birth_date)
+        });
+
+        let doyen = comp_persons.first().cloned();
+        let roots: Vec<PersonDto> = comp_persons
+            .iter()
+            .filter(|p| {
+                child_to_parents.get(&p.id).map_or(true, |parents| parents.is_empty())
+            })
+            .cloned()
+            .collect();
+
+        let label = if is_main {
+            format!("Arbre principal (Tronc Sosa #1) — {} individus", size)
+        } else if size == 1 {
+            let p = &comp_persons[0];
+            format!("Individu isolé : {} {}", p.given_names, p.usage_surname.as_deref().or(p.birth_surname.as_deref()).unwrap_or(""))
+        } else {
+            let surname = doyen.as_ref().and_then(|d| d.usage_surname.as_deref().or(d.birth_surname.as_deref())).unwrap_or("Inconnu");
+            format!("Branche {} — {} personnes détachées", surname, size)
+        };
+
+        fragments.push(TreeFragmentDto {
+            id: format!("fragment-{}", idx),
+            is_main,
+            size,
+            label,
+            doyen,
+            persons: comp_persons,
+            root_persons: roots,
+        });
+    }
+
+    Ok(ApiSuccess::new(TreeFragmentsResponse {
+        total_persons: person_map.len(),
+        main_component_size: main_size,
+        disconnected_count,
+        isolated_count,
+        fragments,
+    }))
 }

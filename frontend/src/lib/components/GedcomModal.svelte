@@ -191,6 +191,15 @@
 		selectedNewPointers = next;
 	}
 
+	function setAllDuplicatesAction(act: 'merge' | 'create' | 'skip') {
+		if (!analysis) return;
+		const next = { ...dupActions };
+		for (const d of analysis.duplicates) {
+			next[d.stagedPointer] = act;
+		}
+		dupActions = next;
+	}
+
 	const filteredNewPersons = $derived.by(() => {
 		if (!analysis) return [];
 		const q = filterNewQuery.trim().toLowerCase();
@@ -540,33 +549,61 @@
 					<!-- Duplicates Section -->
 					{#if analysis.duplicates.length > 0}
 						<div class="section-box">
-							<h4 style="margin: 0 0 0.65rem; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem;">
-								<span>⚠️</span>
-								<span>{i18n.t('duplicatesDetected', { count: analysis.duplicates.length })}</span>
-							</h4>
-							<div style="display: flex; flex-direction: column; gap: 0.55rem; max-height: 220px; overflow-y: auto;">
+							<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.65rem;">
+								<h4 style="margin: 0; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem;">
+									<span>⚠️</span>
+									<span>{i18n.t('duplicatesDetected', { count: analysis.duplicates.length })}</span>
+								</h4>
+								<div style="display: flex; gap: 0.35rem;">
+									<button type="button" class="btn btn-secondary btn-sm" onclick={() => setAllDuplicatesAction('merge')}>
+										⚡ Tout fusionner
+									</button>
+									<button type="button" class="btn btn-secondary btn-sm" onclick={() => setAllDuplicatesAction('create')}>
+										➕ Tout créer
+									</button>
+									<button type="button" class="btn btn-secondary btn-sm" onclick={() => setAllDuplicatesAction('skip')}>
+										🚫 Tout ignorer
+									</button>
+								</div>
+							</div>
+
+							<div style="display: flex; flex-direction: column; gap: 0.65rem; max-height: 280px; overflow-y: auto;">
 								{#each analysis.duplicates as dup (dup.stagedPointer)}
-									<div class="dup-row">
-										<div style="min-width: 0; flex: 1;">
-											<div style="font-size: 0.84rem; font-weight: 700;">
-												{dup.staged.givenNames} {dup.staged.surname}
+									<div class="dup-row" style="flex-direction: column; align-items: stretch; gap: 0.5rem;">
+										<div style="display: flex; justify-content: space-between; align-items: center; gap: 0.6rem;">
+											<div>
+												<span style="font-size: 0.88rem; font-weight: 800; color: var(--text-primary);">
+													{dup.staged.givenNames} {dup.staged.surname}
+												</span>
 												<span class="badge badge-warning" style="margin-left: 0.4rem;">
-													{dup.confidence <= 1 ? Math.round(dup.confidence * 100) : Math.round(dup.confidence)}%
+													{dup.confidence <= 1 ? Math.round(dup.confidence * 100) : Math.round(dup.confidence)}% similarité
 												</span>
 											</div>
-											<div style="font-size: 0.75rem; color: var(--text-secondary);">
-												Existant : {personLabel(dup.existingPerson)} ({formatLifeYears(dup.existingPerson)})
+
+											<select
+												class="select"
+												style="width: 220px; font-weight: 700; height: 32px;"
+												bind:value={dupActions[dup.stagedPointer]}
+											>
+												<option value="merge">⚡ {i18n.t('actionMerge')}</option>
+												<option value="create">➕ {i18n.t('actionCreate')}</option>
+												<option value="skip">🚫 {i18n.t('actionSkip')}</option>
+											</select>
+										</div>
+
+										<!-- Side-by-side comparison Diff -->
+										<div class="diff-grid">
+											<div class="diff-col file">
+												<span class="diff-tag">Fichier GEDCOM</span>
+												<div><strong>Dates :</strong> {dup.staged.birthDate || '—'} → {dup.staged.deathDate || '—'}</div>
+												<div><strong>Lieux :</strong> {dup.staged.birthPlace || '—'}</div>
+											</div>
+											<div class="diff-col db">
+												<span class="diff-tag">Base existante</span>
+												<div><strong>Dates :</strong> {dup.existingPerson.birthDate || '—'} → {dup.existingPerson.deathDate || '—'}</div>
+												<div><strong>Lieux :</strong> {dup.existingPerson.birthPlace || '—'}</div>
 											</div>
 										</div>
-										<select
-											class="select"
-											style="width: 210px;"
-											bind:value={dupActions[dup.stagedPointer]}
-										>
-											<option value="merge">{i18n.t('actionMerge')}</option>
-											<option value="create">{i18n.t('actionCreate')}</option>
-											<option value="skip">{i18n.t('actionSkip')}</option>
-										</select>
 									</div>
 								{/each}
 							</div>
@@ -989,10 +1026,40 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.75rem;
-		padding: 0.55rem 0.75rem;
+		padding: 0.75rem 0.85rem;
 		border-radius: var(--radius-sm);
 		background: var(--bg-surface);
 		border: 1px solid var(--border-subtle);
+	}
+
+	.diff-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.65rem;
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+		background: var(--bg-elevated);
+		padding: 0.5rem 0.65rem;
+		border-radius: 6px;
+	}
+
+	.diff-col {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+
+	.diff-tag {
+		font-size: 0.66rem;
+		font-weight: 800;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--text-muted);
+		margin-bottom: 0.2rem;
+	}
+
+	.diff-col.file .diff-tag {
+		color: var(--accent);
 	}
 
 	.new-person-row {

@@ -397,6 +397,30 @@ export const personApi = {
 		)
 };
 
+export const relationshipApi = {
+	create: (data: { parentId: string; childId: string; type?: string }) =>
+		apiFetch<RelationshipDto>('/relationships', {
+			method: 'POST',
+			body: JSON.stringify(data)
+		}),
+	delete: (id: string) =>
+		apiFetch<{ deleted: boolean }>(`/relationships/${id}`, {
+			method: 'DELETE'
+		})
+};
+
+export const unionApi = {
+	create: (data: { partner1Id: string; partner2Id: string; type?: string; startDate?: string; startPlace?: string; treeId?: string }) =>
+		apiFetch<UnionDto>('/unions', {
+			method: 'POST',
+			body: JSON.stringify({ treeId: DEFAULT_TREE_ID, type: 'MARRIAGE', ...data })
+		}),
+	delete: (id: string) =>
+		apiFetch<{ deleted: boolean }>(`/unions/${id}`, {
+			method: 'DELETE'
+		})
+};
+
 export const treeApi = {
 	getWindow: (
 		rootPersonId: string,
@@ -419,8 +443,29 @@ export const treeApi = {
 	getRelationshipPath: (personAId: string, personBId: string, treeId = DEFAULT_TREE_ID) =>
 		apiFetch<RelationshipPathDto>(
 			`/tree/relationship/${personAId}/${personBId}?treeId=${encodeURIComponent(treeId)}`
-		)
+		),
+
+	getFragments: (treeId = DEFAULT_TREE_ID) =>
+		apiFetch<TreeFragmentsResponse>(`/tree/fragments?treeId=${encodeURIComponent(treeId)}`)
 };
+
+export interface TreeFragmentDto {
+	id: string;
+	isMain: boolean;
+	size: number;
+	label: string;
+	doyen?: PersonDto | null;
+	persons: PersonDto[];
+	rootPersons: PersonDto[];
+}
+
+export interface TreeFragmentsResponse {
+	totalPersons: number;
+	mainComponentSize: number;
+	disconnectedCount: number;
+	isolatedCount: number;
+	fragments: TreeFragmentDto[];
+}
 
 export const searchApi = {
 	search: (q: string, page = 1, limit = 15, treeId = DEFAULT_TREE_ID) =>

@@ -23,6 +23,7 @@
 	import AuditModal from '$lib/components/AuditModal.svelte';
 	import DirectoryStatsModal from '$lib/components/DirectoryStatsModal.svelte';
 	import DuplicatesModal from '$lib/components/DuplicatesModal.svelte';
+	import FragmentsModal from '$lib/components/FragmentsModal.svelte';
 	import Logo from '$lib/components/Logo.svelte';
 	import { exportPosterSvgOrPrint, exportFamilyBook } from '$lib/book-and-poster-export';
 	import { goto } from '$app/navigation';
@@ -56,6 +57,7 @@
 	let showAuditModal = $state(false);
 	let showDirectoryModal = $state(false);
 	let showDuplicatesModal = $state(false);
+	let showFragmentsModal = $state(false);
 	let relativeAnchor = $state<PersonDto | null>(null);
 	let relativeDefaultType = $state<'FATHER' | 'MOTHER' | 'SPOUSE' | 'CHILD'>('CHILD');
 
@@ -293,7 +295,9 @@
 										</div>
 									</div>
 								</div>
-								<span class="badge badge-accent mono">{Math.round((item.similarity || 0) * 100)}%</span>
+								{#if item.sosaNumber}
+									<span class="badge badge-warning mono">Sosa #{item.sosaNumber}</span>
+								{/if}
 							</button>
 						{/each}
 					</div>
@@ -302,65 +306,6 @@
 
 			<!-- Right Studio Controls -->
 			<div class="header-controls">
-				<!-- Segmented View Switcher (Arbre | Roue Sosa | Atlas | Chronologie) -->
-				<div class="segmented-switcher">
-					<button
-						type="button"
-						class="seg-btn"
-						class:active={viewMode === 'tree'}
-						onclick={() => (viewMode = 'tree')}
-					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<circle cx="12" cy="5" r="2.5" />
-							<circle cx="6" cy="19" r="2.5" />
-							<circle cx="18" cy="19" r="2.5" />
-							<path d="M12 7.5V13M6 16.5V13h12v3.5" />
-						</svg>
-						<span>{i18n.t('viewTree')}</span>
-					</button>
-					<button
-						type="button"
-						class="seg-btn"
-						class:active={viewMode === 'fanchart'}
-						onclick={() => {
-							viewMode = 'fanchart';
-							if (ancestorsGen < 5) applyGenerationPreset(6, descendantsGen);
-						}}
-					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M12 12L4.93 4.93a10 10 0 0 1 14.14 0L12 12z" />
-							<circle cx="12" cy="12" r="3" />
-						</svg>
-						<span>{i18n.t('viewFanChart')}</span>
-					</button>
-					<button
-						type="button"
-						class="seg-btn"
-						class:active={viewMode === 'map'}
-						onclick={() => (viewMode = 'map')}
-					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
-							<line x1="8" y1="2" x2="8" y2="18" />
-							<line x1="16" y1="6" x2="16" y2="22" />
-						</svg>
-						<span>{i18n.t('viewMap')}</span>
-					</button>
-					<button
-						type="button"
-						class="seg-btn"
-						class:active={viewMode === 'timeline'}
-						onclick={() => (viewMode = 'timeline')}
-					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<line x1="4" y1="6" x2="16" y2="6" />
-							<line x1="8" y1="12" x2="20" y2="12" />
-							<line x1="4" y1="18" x2="14" y2="18" />
-						</svg>
-						<span>{i18n.t('viewTimeline')}</span>
-					</button>
-				</div>
-
 				<!-- Fixed Dynamic Generation Window Popover -->
 				<div style="position: relative; z-index: 65;">
 					<button
@@ -556,8 +501,77 @@
 
 		<!-- Main Workspace: Left Studio Dock + Interactive Viewport + Right Slide-Over Drawer -->
 		<div class="studio-workspace">
-			<!-- Left Vertical Studio Rail (Outils & Modales) -->
-			<nav class="studio-rail" aria-label="Outils généalogiques">
+			<!-- Left Vertical Studio Rail (Vues & Outils) -->
+			<nav class="studio-rail" aria-label="Modes d'affichage et outils">
+				<!-- Primary Display Views -->
+				<div class="rail-group">
+					<button
+						type="button"
+						class="rail-btn"
+						class:active={viewMode === 'tree'}
+						onclick={() => (viewMode = 'tree')}
+						title={i18n.t('viewTree')}
+					>
+						<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="12" cy="5" r="2.5" />
+							<circle cx="6" cy="19" r="2.5" />
+							<circle cx="18" cy="19" r="2.5" />
+							<path d="M12 7.5V13M6 16.5V13h12v3.5" />
+						</svg>
+						<span class="rail-label">{i18n.t('viewTree')}</span>
+					</button>
+
+					<button
+						type="button"
+						class="rail-btn"
+						class:active={viewMode === 'fanchart'}
+						onclick={() => {
+							viewMode = 'fanchart';
+							if (ancestorsGen < 5) applyGenerationPreset(6, descendantsGen);
+						}}
+						title={i18n.t('viewFanChart')}
+					>
+						<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M12 12L4.93 4.93a10 10 0 0 1 14.14 0L12 12z" />
+							<circle cx="12" cy="12" r="3" />
+						</svg>
+						<span class="rail-label">{i18n.t('viewFanChart')}</span>
+					</button>
+
+					<button
+						type="button"
+						class="rail-btn"
+						class:active={viewMode === 'map'}
+						onclick={() => (viewMode = 'map')}
+						title={i18n.t('viewMap')}
+					>
+						<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+							<line x1="8" y1="2" x2="8" y2="18" />
+							<line x1="16" y1="6" x2="16" y2="22" />
+						</svg>
+						<span class="rail-label">{i18n.t('viewMap')}</span>
+					</button>
+
+					<button
+						type="button"
+						class="rail-btn"
+						class:active={viewMode === 'timeline'}
+						onclick={() => (viewMode = 'timeline')}
+						title={i18n.t('viewTimeline')}
+					>
+						<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<line x1="4" y1="6" x2="16" y2="6" />
+							<line x1="8" y1="12" x2="20" y2="12" />
+							<line x1="4" y1="18" x2="14" y2="18" />
+						</svg>
+						<span class="rail-label">{i18n.t('viewTimeline')}</span>
+					</button>
+				</div>
+
+				<div class="rail-divider"></div>
+
+				<!-- Genealogical Tools -->
 				<div class="rail-group">
 					<button
 						type="button"
@@ -587,14 +601,14 @@
 					<button
 						type="button"
 						class="rail-btn"
-						onclick={() => (showAuditModal = true)}
-						title="Audit & Cohérence"
+						onclick={() => (showFragmentsModal = true)}
+						title="Détecter et relier les bouts d'arbres détachés"
 					>
 						<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-							<path d="m9 12 2 2 4-4" />
+							<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+							<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
 						</svg>
-						<span class="rail-label">{i18n.t('railAudit')}</span>
+						<span class="rail-label">Fragments</span>
 					</button>
 
 					<button
@@ -612,6 +626,40 @@
 						<span class="rail-label">Doublons</span>
 					</button>
 
+					<button
+						type="button"
+						class="rail-btn"
+						onclick={() => (showAuditModal = true)}
+						title="Audit & Cohérence"
+					>
+						<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+							<path d="m9 12 2 2 4-4" />
+						</svg>
+						<span class="rail-label">{i18n.t('railAudit')}</span>
+					</button>
+
+					{#if isAdmin}
+						<button
+							type="button"
+							class="rail-btn"
+							onclick={() => (showGedcomModal = true)}
+							title={i18n.t('gedcomBtn')}
+						>
+							<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+								<polyline points="17 8 12 3 7 8" />
+								<line x1="12" y1="3" x2="12" y2="15" />
+							</svg>
+							<span class="rail-label">{i18n.t('railGedcom')}</span>
+						</button>
+					{/if}
+				</div>
+
+				<div class="rail-divider"></div>
+
+				<!-- Export & Create Root Actions -->
+				<div class="rail-group">
 					{#if treeWindow && selectedPerson}
 						<button
 							type="button"
@@ -638,22 +686,6 @@
 								<path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
 							</svg>
 							<span class="rail-label">Livre</span>
-						</button>
-					{/if}
-
-					{#if isAdmin}
-						<button
-							type="button"
-							class="rail-btn"
-							onclick={() => (showGedcomModal = true)}
-							title={i18n.t('gedcomBtn')}
-						>
-							<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-								<polyline points="17 8 12 3 7 8" />
-								<line x1="12" y1="3" x2="12" y2="15" />
-							</svg>
-							<span class="rail-label">{i18n.t('railGedcom')}</span>
 						</button>
 					{/if}
 
@@ -795,6 +827,21 @@
 		<AuditModal
 			{canModify}
 			onClose={() => (showAuditModal = false)}
+			onFocusPerson={(id) => {
+				viewMode = 'tree';
+				handleFocusPerson(id);
+			}}
+			onTreeMutated={() => {
+				if (focusPersonId) loadTreeWindow(focusPersonId);
+				else initializeTree();
+			}}
+		/>
+	{/if}
+
+	{#if showFragmentsModal}
+		<FragmentsModal
+			{canModify}
+			onClose={() => (showFragmentsModal = false)}
 			onFocusPerson={(id) => {
 				viewMode = 'tree';
 				handleFocusPerson(id);
@@ -1135,6 +1182,13 @@
 		width: 100%;
 	}
 
+	.rail-divider {
+		width: 32px;
+		height: 1px;
+		background: var(--border-subtle);
+		margin: 0.4rem auto;
+	}
+
 	.rail-btn {
 		width: 100%;
 		padding: 0.48rem 0.15rem;
@@ -1154,6 +1208,12 @@
 	.rail-btn:hover {
 		background: var(--bg-elevated);
 		color: var(--text-primary);
+	}
+
+	.rail-btn.active {
+		background: var(--accent-soft);
+		color: var(--accent);
+		border-color: rgba(16, 185, 129, 0.35);
 	}
 
 	.rail-btn.accent {
